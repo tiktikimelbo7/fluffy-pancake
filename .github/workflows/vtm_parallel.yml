@@ -81,7 +81,7 @@ jobs:
       run: |
         mkdir -p Dataset/${QP}/${{ matrix.video_id }}
         cd VVCSoftware_VTM
-        ./build-debug/bin/EncoderApp \
+        ./bin/umake/gcc-11.4/x86_64/debug/EncoderApp \
           -c cfg/encoder_intra_vtm.cfg \
           -i ../Dataset/Inter4K/60fps/UHD/yuv/${{ matrix.video_id }}.yuv \
           -b ../Dataset/${QP}/${{ matrix.video_id }}/output_QP${QP}.bin \
