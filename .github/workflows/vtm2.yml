@@ -1,0 +1,162 @@
+name: VTM Parallel Encode (Cached, Variables Fixed)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  encode:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        video_id: [750, 751, 752, 753, 754]
+
+    env:
+      WIDTH: 3840
+      HEIGHT: 2160
+      FRAMERATE: 60
+      FRAMES: 1
+      QP: 22
+
+    steps:
+    # --------------------------------------------------
+    # CHECKOUT
+    # --------------------------------------------------
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # --------------------------------------------------
+    # DEPENDENCIES
+    # --------------------------------------------------
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential \
+          cmake \
+          git \
+          ffmpeg \
+          unzip \
+          python3-pip
+        pip3 install gdown
+
+    # --------------------------------------------------
+    # CLONE VTM
+    # --------------------------------------------------
+    - name: Clone VTM
+      run: |
+        git clone https://github.com/tonmoyislam250/fluffy-pancake
+        cd fluffy-pancake
+        git submodule update --init --recursive
+
+    # --------------------------------------------------
+    # CACHE UMAKE BUILD
+    # --------------------------------------------------
+    - name: Cache VTM Umake Debug Build
+      uses: actions/cache@v4
+      with:
+        path: |
+          VVCSoftware_VTM/bin
+          VVCSoftware_VTM/lib
+        key: >
+          ${{ runner.os }}-vtm-umake-debug-
+          ${{ hashFiles(
+            'VVCSoftware_VTM/CMakeLists.txt',
+            'VVCSoftware_VTM/source/**',
+            'VVCSoftware_VTM/cfg/**'
+          ) }}
+
+    # --------------------------------------------------
+    # BUILD ONLY IF CACHE MISS
+    # --------------------------------------------------
+    - name: Build VTM (Debug)
+      run: |
+        cd VVCSoftware_VTM
+
+        if [ ! -f bin/umake/gcc-11.4/x86_64/debug/EncoderApp ]; then
+          echo "🔨 Cache miss → building VTM"
+          mkdir -p build-debug
+          cd build-debug
+          cmake .. -DCMAKE_BUILD_TYPE=Debug
+          make -j$(nproc)
+        else
+          echo "✅ Using cached EncoderApp"
+        fi
+
+    # --------------------------------------------------
+    # DOWNLOAD DATASET ZIP
+    # --------------------------------------------------
+    - name: Download dataset zip
+      run: |
+        mkdir -p dataset_zip
+        gdown https://drive.google.com/uc?id=1ZQUFpORJ_EMTqAwHUW0S5Uo2_G4iP9A5 \
+          -O dataset_zip/videos.zip
+
+    # --------------------------------------------------
+    # EXTRACT ZIP
+    # --------------------------------------------------
+    - name: Extract videos
+      run: |
+        unzip -o dataset_zip/videos.zip -d dataset
+
+    # --------------------------------------------------
+    # CONVERT TO YUV (VARIABLE-SAFE)
+    # --------------------------------------------------
+    - name: Convert video to YUV
+      run: |
+        SEQ=${{ matrix.video_id }}
+        WIDTH_VAL=${{ env.WIDTH }}
+        HEIGHT_VAL=${{ env.HEIGHT }}
+        FR_VAL=${{ env.FRAMERATE }}
+
+        echo "Converting video $SEQ to YUV"
+
+        mkdir -p Dataset/Inter4K/60fps/UHD/yuv
+
+        ffmpeg -y \
+          -i dataset/$SEQ.mp4 \
+          -pix_fmt yuv420p \
+          -s ${WIDTH_VAL}x${HEIGHT_VAL} \
+          -r $FR_VAL \
+          Dataset/Inter4K/60fps/UHD/yuv/$SEQ.yuv
+
+    # --------------------------------------------------
+    # ENCODE (VARIABLE-SAFE)
+    # --------------------------------------------------
+    - name: Encode with VTM (Debug)
+      run: |
+        SEQ=${{ matrix.video_id }}
+        QP_VAL=${{ env.QP }}
+        WIDTH_VAL=${{ env.WIDTH }}
+        HEIGHT_VAL=${{ env.HEIGHT }}
+        FR_VAL=${{ env.FRAMERATE }}
+        FRAMES_VAL=${{ env.FRAMES }}
+
+        echo "Encoding SEQ=$SEQ QP=$QP_VAL"
+
+        mkdir -p Dataset/$QP_VAL/$SEQ
+        cd VVCSoftware_VTM
+
+        ./bin/umake/gcc-11.4/x86_64/debug/EncoderApp \
+          -c cfg/encoder_intra_vtm.cfg \
+          -i ../Dataset/Inter4K/60fps/UHD/yuv/$SEQ.yuv \
+          -b ../Dataset/$QP_VAL/$SEQ/output_QP$QP_VAL.bin \
+          -o ../Dataset/$QP_VAL/$SEQ/rec_QP$QP_VAL.yuv \
+          --SourceWidth=$WIDTH_VAL \
+          --SourceHeight=$HEIGHT_VAL \
+          --FrameRate=$FR_VAL \
+          --FramesToBeEncoded=$FRAMES_VAL \
+          --QP=$QP_VAL \
+          --TraceFile="../Dataset/$QP_VAL/$SEQ/$SEQ.csv" \
+          --TraceRule="D_BLOCK_STATISTICS_ALL:poc >=0" \
+          > ../Dataset/$QP_VAL/$SEQ/log_QP$QP_VAL.txt
+
+    # --------------------------------------------------
+    # UPLOAD ARTIFACTS
+    # --------------------------------------------------
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: vtm-${{ matrix.video_id }}-QP${{ env.QP }}
+        path: Dataset/${{ env.QP }}/${{ matrix.video_id }}
