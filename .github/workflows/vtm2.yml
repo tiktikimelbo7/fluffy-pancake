@@ -11,13 +11,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        video_id: [737]
+        video_id: [701, 702, 703, 704, 705]
     env:
       WIDTH: 3840
       HEIGHT: 2160
       FRAMERATE: 60
       FRAMES: 1
-      QP: 37
+      QP: 22
 
     steps:
     # --------------------------------------------------
