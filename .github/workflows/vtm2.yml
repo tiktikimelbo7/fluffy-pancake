@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        video_id: [701, 702, 703, 704, 705]
+        video_id: [532]
     env:
       WIDTH: 3840
       HEIGHT: 2160
@@ -101,8 +101,8 @@ jobs:
         if [ ! -d dataset ]; then
           echo "📥 Cache miss → downloading dataset"
           mkdir -p dataset_zip
-          wget https://huggingface.co/datasets/Tonmoyk983/files/resolve/main/701-770.zip \
-            -O dataset_zip/701-770.zip
+          gdown https://drive.google.com/uc?id=1ZQUFpORJ_EMTqAwHUW0S5Uo2_G4iP9A5 \
+          -O dataset_zip/videos.zip
 
           mkdir -p dataset
           unzip -o dataset_zip/701-770.zip -d dataset
