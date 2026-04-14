@@ -53,7 +53,7 @@ jobs:
     - name: Download dataset zip
       run: |
         mkdir -p dataset_zip
-        gdown 1YNdzhk0mxFln9_2MetHF1cJIsoeVCskh \
+        gdown 1ITpPxS0reaXVcYkCM0Ysl8KpKZfD4RHP \
           -O dataset_zip/videos.zip
 
     - name: Extract zip
@@ -67,7 +67,7 @@ jobs:
       run: |
         mkdir -p Dataset/Inter4K/60fps/UHD/yuv
         ffmpeg -y \
-          -i dataset/Inter4K/60fps/UHD/${{ matrix.video_id }}.mp4 \
+          -i dataset/${{ matrix.video_id }}.mp4 \
           -pix_fmt yuv420p \
           -s ${WIDTH}x${HEIGHT} \
           -r ${FRAMERATE} \
