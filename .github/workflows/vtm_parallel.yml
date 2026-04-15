@@ -17,7 +17,7 @@ jobs:
       HEIGHT: 2160
       FRAMERATE: 60
       FRAMES: 1
-      QP: 22
+      QP: 60
 
     steps:
     - name: Checkout
@@ -95,10 +95,18 @@ jobs:
           > ../Dataset/${QP}/${{ matrix.video_id }}/log_QP${QP}.txt
 
     # -----------------------------
-    # UPLOAD RESULTS
+    # DEBUG (IMPORTANT)
+    # -----------------------------
+    - name: Debug output files
+      run: |
+        echo "Listing Dataset folder:"
+        ls -R Dataset || true
+
+    # -----------------------------
+    # UPLOAD RESULTS (FIXED)
     # -----------------------------
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: vtm-${{ matrix.video_id }}
-        path: Dataset/${QP}/${{ matrix.video_id }}
+        path: Dataset/${{ env.QP }}/${{ matrix.video_id }}
