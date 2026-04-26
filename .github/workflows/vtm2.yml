@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        video_id: [308]
+        video_id: [120]
     env:
       WIDTH: 3840
       HEIGHT: 2160
@@ -101,7 +101,7 @@ jobs:
         if [ ! -d dataset ]; then
           echo "📥 Cache miss → downloading dataset"
           mkdir -p dataset_zip
-          gdown 1ITpPxS0reaXVcYkCM0Ysl8KpKZfD4RHP \
+          gdown 1HYFzISIJJckgpgz0-mYYfpH2TXwG9bZN \
           -O dataset_zip/videos.zip
 
           mkdir -p dataset
