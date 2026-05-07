@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        video_id: [50]
+        video_id: [10]
     env:
       WIDTH: 3840
       HEIGHT: 2160
