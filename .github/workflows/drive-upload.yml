@@ -11,25 +11,22 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix:
-        VIDEO_ID: [1,2,3,4,5]   # <-- change range as needed
+        VIDEO_ID: [1]
+
+    env:
+      FRAME_LIMIT: 5   # 👉 set 10 for testing, 0 for full video
 
     steps:
-    # ----------------------------------------
-    # Checkout
     # ----------------------------------------
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # ----------------------------------------
-    # Install dependencies
     # ----------------------------------------
     - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y unzip xz-utils megatools wget
 
-    # ----------------------------------------
-    # Download FFmpeg
     # ----------------------------------------
     - name: Download FFmpeg
       run: |
@@ -39,15 +36,11 @@ jobs:
         tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
 
     # ----------------------------------------
-    # Set variables
-    # ----------------------------------------
     - name: Set variables
       run: |
         echo "FFMPEG=ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" >> $GITHUB_ENV
         echo "INPUT=dataset/${{ matrix.VIDEO_ID }}.mp4" >> $GITHUB_ENV
 
-    # ----------------------------------------
-    # Cache dataset
     # ----------------------------------------
     - name: Cache dataset
       uses: actions/cache@v4
@@ -55,8 +48,6 @@ jobs:
         path: dataset
         key: dataset-mega-v1-${{ runner.os }}
 
-    # ----------------------------------------
-    # Download dataset
     # ----------------------------------------
     - name: Download dataset
       run: |
@@ -74,7 +65,16 @@ jobs:
       run: |
         mkdir -p output
 
+        if [ "$FRAME_LIMIT" -gt 0 ]; then
+          LIMIT="-frames:v $FRAME_LIMIT"
+          echo "Processing FIRST $FRAME_LIMIT frames"
+        else
+          LIMIT=""
+          echo "Processing FULL video"
+        fi
+
         $FFMPEG -y -i "$INPUT" \
+          $LIMIT \
           -c:v libvvenc \
           -qp 32 \
           -pix_fmt yuv420p \
@@ -82,12 +82,13 @@ jobs:
           -f matroska - \
         | $FFMPEG -y -fflags +genpts -i - \
           -vsync 0 \
+          $LIMIT \
           -pix_fmt yuv420p \
           -f rawvideo \
           output/${{ matrix.VIDEO_ID }}.yuv
 
     # ----------------------------------------
-    # Generate Inter4K dataset (60-frame gap)
+    # Generate Inter4K dataset
     # ----------------------------------------
     - name: Create Inter4K samples
       run: |
@@ -96,7 +97,6 @@ jobs:
 
         WIDTH=3840
         HEIGHT=2160
-        PIXFMT=yuv420p
 
         INPUT_YUV="output/${{ matrix.VIDEO_ID }}.yuv"
 
@@ -106,7 +106,14 @@ jobs:
 
         echo "Total frames: $TOTAL_FRAMES"
 
-        for ((f=0; f+3<TOTAL_FRAMES; f+=60)); do
+        # Adaptive stride
+        if [ "$FRAME_LIMIT" -gt 0 ]; then
+          STRIDE=1
+        else
+          STRIDE=60
+        fi
+
+        for ((f=0; f+3<TOTAL_FRAMES; f+=STRIDE)); do
           echo "Frame group $f"
 
           # Inputs: f, f+1, f+2
@@ -129,21 +136,16 @@ jobs:
         done
 
     # ----------------------------------------
-    # Install rclone
-    # ----------------------------------------
     - name: Install rclone
       run: |
         curl https://rclone.org/install.sh | sudo bash
 
     # ----------------------------------------
-    # Configure rclone
-    # ----------------------------------------
     - name: Configure rclone
       run: |
         mkdir -p ~/.config/rclone
         echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
-    # ----------------------------------------
-    # Upload to Google Drive
+
     # ----------------------------------------
     - name: Upload dataset to Drive
       run: |
