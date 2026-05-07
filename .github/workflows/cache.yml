@@ -1,4 +1,4 @@
-name: Cache Dataset (Build MEGAcmd)
+name: Cache Dataset (MEGA)
 
 on:
   workflow_dispatch:
@@ -9,41 +9,15 @@ jobs:
 
     steps:
     # ----------------------------------------
-    # Install build dependencies
+    # Install tools
     # ----------------------------------------
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y \
-          build-essential \
-          cmake \
-          git \
-          unzip \
-          libssl-dev \
-          libcrypto++-dev \
-          libsqlite3-dev \
-          zlib1g-dev
+        sudo apt install -y unzip megatools
 
     # ----------------------------------------
-    # Clone & build MEGAcmd
-    # ----------------------------------------
-    - name: Build MEGAcmd
-      run: |
-        git clone https://github.com/meganz/MEGAcmd.git
-        cd MEGAcmd
-
-        git submodule update --init --recursive
-
-        cmake -B build -DCMAKE_BUILD_TYPE=Release
-        cmake --build build -j$(nproc)
-
-        sudo cmake --install build
-
-        # Verify install
-        mega-version || echo "❌ MEGAcmd install failed"
-
-    # ----------------------------------------
-    # Restore dataset cache
+    # Cache dataset
     # ----------------------------------------
     - name: Restore dataset cache
       uses: actions/cache@v4
@@ -52,35 +26,18 @@ jobs:
         key: dataset-mega-v1-${{ runner.os }}
 
     # ----------------------------------------
-    # Download dataset using MEGAcmd
+    # Download if cache miss
     # ----------------------------------------
-    - name: Download dataset (MEGA)
-      env:
-        MEGA_USER: ${{ secrets.MEGA_USER }}
-        MEGA_PASS: ${{ secrets.MEGA_PASS }}
+    - name: Download dataset (if needed)
       run: |
         if [ ! -d dataset ]; then
-          echo "📥 Cache miss → downloading dataset via MEGA"
+          echo "📥 Cache miss → downloading dataset"
 
           mkdir -p dataset_zip
 
-          # Login
-          mega-login "$MEGA_USER" "$MEGA_PASS"
+          megadl "https://mega.nz/file/kIdhyATA#QjiOI1xFOZjRWpRUKSSPFRWzBx2WpUQ1PLfezxmt740" \
+            --path dataset_zip
 
-          # Retry loop
-          for i in {1..5}; do
-            echo "Attempt $i..."
-
-            mega-get "https://mega.nz/file/kIdhyATA#QjiOI1xFOZjRWpRUKSSPFRWzBx2WpUQ1PLfezxmt740" dataset_zip/ && break
-
-            echo "⚠️ Failed attempt $i, retrying in 2 minutes..."
-            sleep 120
-          done
-
-          # Logout
-          mega-logout
-
-          # Extract dataset
           mkdir -p dataset
           unzip -o dataset_zip/*.zip -d dataset
 
