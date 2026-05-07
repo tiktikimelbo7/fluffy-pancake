@@ -1,4 +1,4 @@
-name: Cache Dataset (MEGA CMD Manual Install)
+name: Cache Dataset (Build MEGAcmd)
 
 on:
   workflow_dispatch:
@@ -9,26 +9,41 @@ jobs:
 
     steps:
     # ----------------------------------------
-    # Install dependencies
+    # Install build dependencies
     # ----------------------------------------
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y unzip wget
+        sudo apt install -y \
+          build-essential \
+          cmake \
+          git \
+          unzip \
+          libssl-dev \
+          libcrypto++-dev \
+          libsqlite3-dev \
+          zlib1g-dev
 
     # ----------------------------------------
-    # Install mega-cmd manually (.deb)
+    # Clone & build MEGAcmd
     # ----------------------------------------
-    - name: Install mega-cmd
+    - name: Build MEGAcmd
       run: |
-        wget https://mega.nz/linux/repo/xUbuntu_22.04/amd64/mega-cmd_1.6.3-1.1_amd64.deb
-        sudo apt install -y ./mega-cmd_1.6.3-1.1_amd64.deb
+        git clone https://github.com/meganz/MEGAcmd.git
+        cd MEGAcmd
 
-        # verify
-        mega-version || echo "mega-cmd install failed"
+        git submodule update --init --recursive
+
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build -j$(nproc)
+
+        sudo cmake --install build
+
+        # Verify install
+        mega-version || echo "❌ MEGAcmd install failed"
 
     # ----------------------------------------
-    # Restore cache
+    # Restore dataset cache
     # ----------------------------------------
     - name: Restore dataset cache
       uses: actions/cache@v4
@@ -37,18 +52,19 @@ jobs:
         key: dataset-mega-v1-${{ runner.os }}
 
     # ----------------------------------------
-    # Download dataset using mega-cmd
+    # Download dataset using MEGAcmd
     # ----------------------------------------
-    - name: Download dataset (mega-cmd)
+    - name: Download dataset (MEGA)
       env:
         MEGA_USER: ${{ secrets.MEGA_USER }}
         MEGA_PASS: ${{ secrets.MEGA_PASS }}
       run: |
         if [ ! -d dataset ]; then
-          echo "📥 Downloading dataset via mega-cmd"
+          echo "📥 Cache miss → downloading dataset via MEGA"
 
           mkdir -p dataset_zip
 
+          # Login
           mega-login "$MEGA_USER" "$MEGA_PASS"
 
           # Retry loop
@@ -61,8 +77,10 @@ jobs:
             sleep 120
           done
 
+          # Logout
           mega-logout
 
+          # Extract dataset
           mkdir -p dataset
           unzip -o dataset_zip/*.zip -d dataset
 
