@@ -1,4 +1,4 @@
-name: Cache Dataset (MEGA CMD Login)
+name: Cache Dataset (MEGA CMD Manual Install)
 
 on:
   workflow_dispatch:
@@ -11,10 +11,21 @@ jobs:
     # ----------------------------------------
     # Install dependencies
     # ----------------------------------------
-    - name: Install mega-cmd + unzip
+    - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y mega-cmd unzip
+        sudo apt install -y unzip wget
+
+    # ----------------------------------------
+    # Install mega-cmd manually (.deb)
+    # ----------------------------------------
+    - name: Install mega-cmd
+      run: |
+        wget https://mega.nz/linux/repo/xUbuntu_22.04/amd64/mega-cmd_1.6.3-1.1_amd64.deb
+        sudo apt install -y ./mega-cmd_1.6.3-1.1_amd64.deb
+
+        # verify
+        mega-version || echo "mega-cmd install failed"
 
     # ----------------------------------------
     # Restore cache
@@ -26,7 +37,7 @@ jobs:
         key: dataset-mega-v1-${{ runner.os }}
 
     # ----------------------------------------
-    # Download dataset using mega-cmd (LOGIN + RETRY)
+    # Download dataset using mega-cmd
     # ----------------------------------------
     - name: Download dataset (mega-cmd)
       env:
@@ -34,14 +45,13 @@ jobs:
         MEGA_PASS: ${{ secrets.MEGA_PASS }}
       run: |
         if [ ! -d dataset ]; then
-          echo "📥 Cache miss → downloading dataset via mega-cmd"
+          echo "📥 Downloading dataset via mega-cmd"
 
           mkdir -p dataset_zip
 
-          # Login
           mega-login "$MEGA_USER" "$MEGA_PASS"
 
-          # Retry loop (important for CI stability)
+          # Retry loop
           for i in {1..5}; do
             echo "Attempt $i..."
 
@@ -51,10 +61,8 @@ jobs:
             sleep 120
           done
 
-          # Logout (cleanup session)
           mega-logout
 
-          # Extract
           mkdir -p dataset
           unzip -o dataset_zip/*.zip -d dataset
 
