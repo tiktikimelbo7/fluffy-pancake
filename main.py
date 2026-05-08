@@ -9,12 +9,6 @@ LOCAL_DIR = "upload_data"
 # -----------------------------
 # 0. Install required system tools
 # -----------------------------
-subprocess.run(
-    "apt update && apt install -y curl unzip wget ca-certificates",
-    shell=True,
-    check=True
-)
-
 # -----------------------------
 # 1. Setup Kaggle credentials
 # -----------------------------
@@ -29,16 +23,7 @@ with open(os.path.expanduser("~/.kaggle/kaggle.json"), "w") as f:
 os.chmod(os.path.expanduser("~/.kaggle/kaggle.json"), 0o600)
 
 # -----------------------------
-# 2. Install rclone (now curl exists)
-# -----------------------------
-subprocess.run(
-    "curl https://rclone.org/install.sh | bash",
-    shell=True,
-    check=True
-)
-
-# -----------------------------
-# 3. Setup rclone config
+# 2. Setup rclone config
 # -----------------------------
 os.makedirs(os.path.expanduser("~/.config/rclone"), exist_ok=True)
 
@@ -46,7 +31,7 @@ with open(os.path.expanduser("~/.config/rclone/rclone.conf"), "wb") as f:
     f.write(base64.b64decode(os.environ["RCLONE_CONFIG_BASE64"]))
 
 # -----------------------------
-# 4. Download dataset from Drive
+# 3. Download dataset from Drive
 # -----------------------------
 subprocess.run(
     f"rclone copy gdrive:upload_data {LOCAL_DIR} --progress --transfers 8 --checkers 8",
@@ -55,7 +40,7 @@ subprocess.run(
 )
 
 # -----------------------------
-# 5. Upload to Kaggle
+# 4. Upload to Kaggle
 # -----------------------------
 kagglehub.dataset_upload(
     DATASET_HANDLE,
