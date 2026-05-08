@@ -19,6 +19,10 @@ with open(os.path.expanduser("~/.kaggle/kaggle.json"), "w") as f:
 
 os.chmod(os.path.expanduser("~/.kaggle/kaggle.json"), 0o600)
 
+
+# Install curl if missing
+subprocess.run("apt update && apt install -y curl", shell=True, check=True)
+
 # -----------------------------
 # Install rclone
 # -----------------------------
