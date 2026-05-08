@@ -169,4 +169,4 @@ jobs:
 
     - name: Upload dataset to Drive
       run: |
-        rclone copy upload_data/VCIP_png dataset:VCIP_png --progress
+        rclone copy upload_data/VCIP_png dataset:upload_data/VCIP_png --progress
