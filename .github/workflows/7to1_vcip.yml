@@ -1,4 +1,4 @@
-name: VVENC → VCIP PNG Dataset 7to1→ Google Drive
+name: VVENC → VCIP PNG Dataset 2→ Google Drive
 
 on:
   workflow_dispatch:
@@ -24,212 +24,159 @@ jobs:
       FRAME_LIMIT: 0
 
     steps:
+      - uses: actions/checkout@v4
 
-    # ----------------------------------------
-    - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y unzip xz-utils megatools wget curl
 
-    # ----------------------------------------
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y unzip xz-utils megatools wget curl
+      - name: Download FFmpeg
+        run: |
+          mkdir -p ffmpeg_bin
+          cd ffmpeg_bin
+          wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+          tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
 
-    # ----------------------------------------
-    - name: Download FFmpeg
-      run: |
-        mkdir -p ffmpeg_bin
-        cd ffmpeg_bin
+      - name: Set variables
+        run: |
+          echo "FFMPEG=$GITHUB_WORKSPACE/ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" >> $GITHUB_ENV
+          echo "FFPROBE=$GITHUB_WORKSPACE/ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffprobe" >> $GITHUB_ENV
+          echo "INPUT=dataset/${{ matrix.VIDEO_ID }}.mp4" >> $GITHUB_ENV
 
-        wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+      - uses: actions/cache@v4
+        with:
+          path: dataset
+          key: dataset-mega-v1-${{ runner.os }}
 
-        tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
+      - name: Download dataset
+        run: |
+          if [ ! -d dataset ]; then
+            mkdir -p dataset_zip
+            megadl "https://mega.nz/file/kIdhyATA#QjiOI1xFOZjRWpRUKSSPFRWzBx2WpUQ1PLfezxmt740" --path dataset_zip
+            mkdir -p dataset
+            unzip -o dataset_zip/*.zip -d dataset
+          fi
 
-    # ----------------------------------------
-    - name: Set variables
-      run: |
-        echo "FFMPEG=$GITHUB_WORKSPACE/ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" >> $GITHUB_ENV
-        echo "FFPROBE=$GITHUB_WORKSPACE/ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffprobe" >> $GITHUB_ENV
-        echo "INPUT=dataset/${{ matrix.VIDEO_ID }}.mp4" >> $GITHUB_ENV
+      - name: Detect video resolution
+        run: |
+          WIDTH=$($FFPROBE -v error -select_streams v:0 \
+            -show_entries stream=width -of csv=p=0 "$INPUT")
 
-    # ----------------------------------------
-    - uses: actions/cache@v4
-      with:
-        path: dataset
-        key: dataset-mega-v1-${{ runner.os }}
+          HEIGHT=$($FFPROBE -v error -select_streams v:0 \
+            -show_entries stream=height -of csv=p=0 "$INPUT")
 
-    # ----------------------------------------
-    - name: Download dataset
-      run: |
-        if [ ! -d dataset ]; then
-          mkdir -p dataset_zip
+          TOTAL_FRAMES=$($FFPROBE -v error -select_streams v:0 -count_frames \
+            -show_entries stream=nb_read_frames -of csv=p=0 "$INPUT")
 
-          megadl "https://mega.nz/file/siEmHIyS#8gkEbapaTjyNWl7zlunnokUQfaF8dl4-Ilc8RyfU4rw" --path dataset_zip
+          echo "WIDTH=$WIDTH" >> $GITHUB_ENV
+          echo "HEIGHT=$HEIGHT" >> $GITHUB_ENV
+          echo "TOTAL_FRAMES=$TOTAL_FRAMES" >> $GITHUB_ENV
 
-          mkdir -p dataset
+          echo "Detected resolution: ${WIDTH}x${HEIGHT}"
+          echo "Total frames: ${TOTAL_FRAMES}"
 
-          unzip -o dataset_zip/*.zip -d dataset
-        fi
+      - name: Generate reconstructed YUV
+        run: |
+          set -euo pipefail
+          mkdir -p output
 
-    # ----------------------------------------
-    # Detect resolution dynamically
-    # ----------------------------------------
-    - name: Detect video resolution
-      run: |
+          if [ "$FRAME_LIMIT" -gt 0 ]; then
+            LIMIT="-frames:v $FRAME_LIMIT"
+          else
+            LIMIT=""
+          fi
 
-        WIDTH=$($FFPROBE -v error \
-          -select_streams v:0 \
-          -show_entries stream=width \
-          -of csv=p=0 "$INPUT")
-
-        HEIGHT=$($FFPROBE -v error \
-          -select_streams v:0 \
-          -show_entries stream=height \
-          -of csv=p=0 "$INPUT")
-
-        TOTAL_FRAMES=$($FFPROBE -v error \
-          -select_streams v:0 \
-          -count_frames \
-          -show_entries stream=nb_read_frames \
-          -of csv=p=0 "$INPUT")
-
-        echo "WIDTH=$WIDTH" >> $GITHUB_ENV
-        echo "HEIGHT=$HEIGHT" >> $GITHUB_ENV
-        echo "TOTAL_FRAMES=$TOTAL_FRAMES" >> $GITHUB_ENV
-
-        echo "Detected resolution: ${WIDTH}x${HEIGHT}"
-        echo "Total frames: ${TOTAL_FRAMES}"
-
-    # ----------------------------------------
-    # VVENC encode → decode → reconstructed YUV
-    # ----------------------------------------
-    - name: Generate reconstructed YUV
-      run: |
-        set -euo pipefail
-
-        mkdir -p output
-
-        if [ "$FRAME_LIMIT" -gt 0 ]; then
-          LIMIT="-frames:v $FRAME_LIMIT"
-        else
-          LIMIT=""
-        fi
-
-        $FFMPEG -y \
-          -i "$INPUT" \
-          $LIMIT \
-          -c:v libvvenc \
-          -qp 32 \
-          -pix_fmt yuv420p \
-          -an \
-          -f matroska - \
-        | $FFMPEG -y \
-            -fflags +genpts \
-            -i - \
-            -vsync 0 \
+          $FFMPEG -y \
+            -i "$INPUT" \
             $LIMIT \
+            -c:v libvvenc \
+            -qp 32 \
             -pix_fmt yuv420p \
-            -f rawvideo \
-            output/${{ matrix.VIDEO_ID }}.yuv
+            -an \
+            -f matroska - \
+          | $FFMPEG -y \
+              -fflags +genpts \
+              -i - \
+              -vsync 0 \
+              $LIMIT \
+              -pix_fmt yuv420p \
+              -f rawvideo \
+              output/${{ matrix.VIDEO_ID }}.yuv
 
-    # ----------------------------------------
-    # Create VCIP PNG dataset
-    #
-    # Inputs:
-    #   frames 1-7 = reconstructed VVENC
-    #
-    # Output:
-    #   frame 8 = original video
-    #
-    # 120-frame videos -> stride 25
-    # others remain same
-    # ----------------------------------------
-    - name: Create VCIP PNG samples
-      run: |
-        set -euo pipefail
+      - name: Create VCIP PNG samples
+        run: |
+          set -euo pipefail
 
-        mkdir -p upload_data/VCIP_png/Raw/Input
-        mkdir -p upload_data/VCIP_png/Raw/Output
+          mkdir -p upload_data/VCIP_png/Raw/Input
+          mkdir -p upload_data/VCIP_png/Raw/Output
 
-        echo "Total frames: $TOTAL_FRAMES"
+          if [ "$FRAME_LIMIT" -gt 0 ]; then
+            STRIDE=1
+          else
+            case $TOTAL_FRAMES in
+              120) STRIDE=25 ;;
+              150) STRIDE=30 ;;
+              300) STRIDE=60 ;;
+              600) STRIDE=120 ;;
+              *) STRIDE=60 ;;
+            esac
+          fi
 
-        if [ "$FRAME_LIMIT" -gt 0 ]; then
+          echo "Using STRIDE: $STRIDE"
 
-          STRIDE=1
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
 
-        else
+          for ((START=1; START+7<=TOTAL_FRAMES; START+=STRIDE)); do
+            TARGET=$((START + 7))
 
-          case $TOTAL_FRAMES in
-            120) STRIDE=25 ;;
-            150) STRIDE=30 ;;
-            300) STRIDE=60 ;;
-            600) STRIDE=120 ;;
-            *) STRIDE=60 ;;
-          esac
+            printf -v START_PAD "%03d" "$START"
+            printf -v TARGET_PAD "%03d" "$TARGET"
 
-        fi
+            echo "Processing START=$START TARGET=$TARGET"
 
-        echo "Using STRIDE: $STRIDE"
+            # Extract 7 reconstructed frames in one pass
+            FIRST=$((START - 1))
+            LAST=$((START + 5))
 
-        # ----------------------------------------
-        # START loop
-        # ----------------------------------------
-        for ((START=1; START+7<=TOTAL_FRAMES; START+=STRIDE)); do
-
-          TARGET=$((START + 7))
-
-          printf -v START_PAD "%03d" "$START"
-          printf -v TARGET_PAD "%03d" "$TARGET"
-
-          echo "Processing START=$START TARGET=$TARGET"
-
-          # ----------------------------------------
-          # Extract 7 reconstructed input frames
-          # ----------------------------------------
-          for OFFSET in 0 1 2 3 4 5 6; do
-
-            FRAME=$((START + OFFSET))
-
-            INPUT_NUM=$((OFFSET + 1))
-
-            echo "Extracting reconstructed frame $FRAME"
+            SAMPLE_DIR="$TMP_DIR/sample_${START}"
+            mkdir -p "$SAMPLE_DIR"
 
             $FFMPEG -v error -y \
               -f rawvideo \
               -pix_fmt yuv420p \
               -s ${WIDTH}x${HEIGHT} \
+              -framerate 30 \
               -i output/${{ matrix.VIDEO_ID }}.yuv \
-              -vf "select=eq(n\\,$((FRAME-1)))" \
-              -frames:v 1 \
-              upload_data/VCIP_png/Raw/Input/VCIP_vid_${{ matrix.VIDEO_ID }}_f${START_PAD}_in${INPUT_NUM}.png
+              -vf "select='between(n\,${FIRST}\,${LAST})',setpts=N/FRAME_RATE/TB" \
+              -vsync 0 \
+              "$SAMPLE_DIR/in_%06d.png"
 
+            # Copy 1..7 input frames to final names
+            for i in 1 2 3 4 5 6 7; do
+              printf -v IDX "%06d" "$i"
+              cp "$SAMPLE_DIR/in_${IDX}.png" \
+                upload_data/VCIP_png/Raw/Input/VCIP_vid_${{ matrix.VIDEO_ID }}_f${START_PAD}_in${i}.png
+            done
+
+            # Extract output frame from original video
+            $FFMPEG -v error -y \
+              -i "$INPUT" \
+              -vf "select=eq(n\\,$((TARGET-1)))" \
+              -frames:v 1 \
+              upload_data/VCIP_png/Raw/Output/VCIP_vid_${{ matrix.VIDEO_ID }}_f${TARGET_PAD}_out.png
           done
 
-          # ----------------------------------------
-          # Extract ORIGINAL target frame
-          # ----------------------------------------
-          echo "Extracting original frame $TARGET"
+      - name: Install rclone
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
 
-          $FFMPEG -v error -y \
-            -i "$INPUT" \
-            -vf "select=eq(n\\,$((TARGET-1)))" \
-            -frames:v 1 \
-            upload_data/VCIP_png/Raw/Output/VCIP_vid_${{ matrix.VIDEO_ID }}_f${TARGET_PAD}_out.png
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
 
-        done
-
-    # ----------------------------------------
-    - name: Install rclone
-      run: |
-        curl https://rclone.org/install.sh | sudo bash
-
-    # ----------------------------------------
-    - name: Configure rclone
-      run: |
-        mkdir -p ~/.config/rclone
-
-        echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
-
-    # ----------------------------------------
-    - name: Upload dataset to Drive
-      run: |
-        rclone copy upload_data/VCIP_png dataset:sevtone/VCIP_png --progress
+      - name: Upload dataset to Drive
+        run: |
+          rclone copy upload_data/VCIP_png dataset:sevtone/VCIP_png --progress
