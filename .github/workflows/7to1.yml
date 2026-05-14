@@ -1,4 +1,4 @@
-name: VVENC → Inter4K PNG Dataset → Google Drive
+name: VVENC → Inter4K PNG Dataset(7to1) → Google Drive
 
 on:
   workflow_dispatch:
@@ -166,4 +166,4 @@ jobs:
     # ----------------------------------------
     - name: Upload dataset to Google Drive
       run: |
-        rclone copy Inter4K_png dataset:Inter4K_png --progress
+        rclone copy Inter4K_png dataset:sevtone/Inter4K_png/ --progress
