@@ -86,8 +86,7 @@ print("Uploading to Kaggle...")
 kagglehub.dataset_upload(
     DATASET_HANDLE,
     LOCAL_DIR,
-    version_notes="Uploaded via Railway (rclone fixed)",
-    is_private=False
+    version_notes="Uploaded via Railway (rclone fixed)"
 )
 
 print("🎉 Upload completed successfully!")
