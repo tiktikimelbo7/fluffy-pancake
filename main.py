@@ -4,8 +4,8 @@ import kagglehub
 import base64
 import urllib.request
 
-DATASET_HANDLE = "tonmoyk983/sevtone-half-inter4k-vcip"
-LOCAL_DIR = "sevtone"
+DATASET_HANDLE = "tonmoyk983/sevtone-half-inter4k-input"
+LOCAL_DIR = "sevtone/Inter4K_png/Raw/Input"
 
 # -----------------------------
 # 0. Install required tools
@@ -77,7 +77,13 @@ subprocess.run(
     check=True
 )
 
-print("✅ Rclone ready")
+subprocess.run(
+    f"{rclone_path} version",
+    shell=True,
+    check=True
+)
+
+print("✅ Rclone ready:", rclone_path)
 
 # -----------------------------
 # 3. Setup rclone config
@@ -102,23 +108,12 @@ with open(
         )
     )
 
-# -----------------------------
-# Create output folders
-# -----------------------------
-os.makedirs(
-    f"{LOCAL_DIR}/Inter4K_png/Raw/Input",
-    exist_ok=True
-)
-
-os.makedirs(
-    f"{LOCAL_DIR}/VCIP_png",
-    exist_ok=True
-)
+print("✅ Rclone configured")
 
 # -----------------------------
-# 4. Read Inter4K file list
+# 4. Create file list for videos 1-500
 # -----------------------------
-print("Reading Inter4K files...")
+print("Reading file list from Google Drive...")
 
 result = subprocess.run(
     f"{rclone_path} lsf dataset:sevtone/Inter4K_png/Raw/Input -R",
@@ -128,36 +123,51 @@ result = subprocess.run(
     check=True
 )
 
-files = sorted([
-    x.strip()
-    for x in result.stdout.splitlines()
-    if x.strip()
-])
+all_files = [
+    f.strip()
+    for f in result.stdout.splitlines()
+    if f.strip()
+]
 
-total_files = len(files)
-half = total_files // 2
+selected_files = []
 
-print(f"Total Inter4K files: {total_files}")
-print(f"Downloading SECOND half: {half+1} → {total_files}")
+for file in sorted(all_files):
 
-with open(
-    "second_half.txt",
-    "w"
-) as f:
+    filename = os.path.basename(file)
 
-    for file in files[half:]:
+    # Example:
+    # Inter4K_vid_1_f001_in1.png
+    if filename.startswith("Inter4K_vid_"):
+
+        try:
+            vid_num = int(
+                filename.split("_")[2]
+            )
+
+            if 1 <= vid_num <= 500:
+                selected_files.append(file)
+
+        except:
+            pass
+
+print(f"Total selected files: {len(selected_files)}")
+
+with open("video_1_500.txt", "w") as f:
+    for file in selected_files:
         f.write(file + "\n")
 
+print("✅ File list prepared")
+
 # -----------------------------
-# 5. Download SECOND HALF
+# 5. Download selected files
 # -----------------------------
-print("Downloading second half of Inter4K...")
+print("Downloading videos 1-500...")
 
 subprocess.run(
     f"{rclone_path} copy "
     f"dataset:sevtone/Inter4K_png/Raw/Input "
-    f"{LOCAL_DIR}/Inter4K_png/Raw/Input "
-    f"--files-from second_half.txt "
+    f"{LOCAL_DIR} "
+    f"--files-from video_1_500.txt "
     f"--progress "
     f"--transfers 8 "
     f"--checkers 8 "
@@ -166,38 +176,17 @@ subprocess.run(
     check=True
 )
 
-print("✅ Inter4K second half complete")
+print("✅ Download complete")
 
 # -----------------------------
-# 6. Download FULL VCIP
-# -----------------------------
-print("Downloading complete VCIP...")
-
-subprocess.run(
-    f"{rclone_path} copy "
-    f"dataset:sevtone/VCIP_png "
-    f"{LOCAL_DIR}/VCIP_png "
-    f"--progress "
-    f"--transfers 8 "
-    f"--checkers 8 "
-    f"--retries 5",
-    shell=True,
-    check=True
-)
-
-print("✅ VCIP complete")
-
-# -----------------------------
-# 7. Upload to Kaggle
+# 6. Upload to Kaggle
 # -----------------------------
 print("Uploading to Kaggle...")
 
 kagglehub.dataset_upload(
     DATASET_HANDLE,
     LOCAL_DIR,
-    version_notes=(
-        "Second half of Inter4K_png Raw Input and VCIP "
-    )
+    version_notes="Uploaded Inter4K videos 1-500"
 )
 
 print("🎉 Upload completed successfully!")
