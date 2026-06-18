@@ -98,13 +98,13 @@ jobs:
       # Inputs:
       #   1-7 reconstructed frames
       #
-      # Target:
-      #   8th original frame
+      # Targets:
+      #   8th original frame (Target)
+      #   4th original frame (Middle Original)
       #
       # Examples:
-      #   1-7  -> 8
-      #   81-87 -> 88
-      #   161-167 -> 168
+      #   1-7  -> 8 (Target) and 4 (Orig)
+      #   61-67 -> 68 (Target) and 64 (Orig)
       # ----------------------------------------
       - name: Create sparse Inter4K PNG dataset
         run: |
@@ -126,10 +126,12 @@ jobs:
           for ((START=1; START+7<=TOTAL_FRAMES; START+=STRIDE)); do
 
             TARGET=$((START + 7))
+            MIDDLE=$((START + 3))
 
             printf -v TARGET_PAD "%03d" "$TARGET"
+            printf -v MIDDLE_PAD "%03d" "$MIDDLE"
 
-            echo "Processing START=$START TARGET=$TARGET"
+            echo "Processing START=$START MIDDLE=$MIDDLE TARGET=$TARGET"
 
             # ----------------------------------------
             # Extract reconstructed input frames
@@ -155,13 +157,22 @@ jobs:
             done
 
             # ----------------------------------------
-            # Extract original target frame
+            # Extract original target frame (8th frame)
             # ----------------------------------------
             $FFMPEG -v error -y \
               -i "$INPUT" \
               -vf "select=eq(n\\,$((TARGET-1)))" \
               -frames:v 1 \
               Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${TARGET_PAD}_out.png
+
+            # ----------------------------------------
+            # Extract original middle frame (4th frame)
+            # ----------------------------------------
+            $FFMPEG -v error -y \
+              -i "$INPUT" \
+              -vf "select=eq(n\\,$((MIDDLE-1)))" \
+              -frames:v 1 \
+              Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${MIDDLE_PAD}_orig.png
 
           done
 
