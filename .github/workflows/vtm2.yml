@@ -15,7 +15,7 @@ jobs:
       WIDTH: 3840
       HEIGHT: 2160
       FRAMERATE: 60
-      FRAMES: 300
+      FRAMES: 24
       QP: 32
 
     steps:
@@ -148,7 +148,7 @@ jobs:
         cd fluffy-pancake
 
         ./bin/umake/gcc-11.4/x86_64/debug/EncoderApp \
-          -c cfg/encoder_lowdelay_P_vtm.cfg \
+          -c cfg/encoder_lowdelay_P_vtm_FixedQP_GOP_8.cfg \
           -i ../Dataset/Inter4K/60fps/UHD/yuv/$SEQ.yuv \
           -b ../Dataset/$QP_VAL/$SEQ/output_QP$QP_VAL.bin \
           -o ../Dataset/$QP_VAL/$SEQ/rec_QP$QP_VAL.yuv \
