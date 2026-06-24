@@ -77,20 +77,7 @@ jobs:
 
           mkdir -p output
 
-          $FFMPEG -y \
-            -i "$INPUT" \
-            -c:v libvvenc \
-            -qp 51 \
-            -pix_fmt yuv420p \
-            -an \
-            -f matroska - \
-          | $FFMPEG -y \
-              -fflags +genpts \
-              -i - \
-              -vsync 0 \
-              -pix_fmt yuv420p \
-              -f rawvideo \
-              output/${{ matrix.VIDEO_ID }}.yuv
+          $FFMPEG -y -i "$INPUT" -c:v libvvenc -qp 51 -pix_fmt yuv420p -vvenc-params "gopsize=4:intraperiod=4:decodingrefreshtype=idr:numrefpics=3" -an -f matroska - | $FFMPEG -y -fflags +genpts -i - -vsync 0 -pix_fmt yuv420p -f rawvideo output/${{ matrix.VIDEO_ID }}.yuv
 
       # ----------------------------------------
       # Create sparse Inter4K dataset
@@ -191,4 +178,4 @@ jobs:
       # ----------------------------------------
       - name: Upload dataset to Google Drive
         run: |
-          rclone copy Inter4K_png dataset:sevtone_51/Inter4K_png --progress
+          rclone copy Inter4K_png dataset:sevtone_test/Inter4K_png --progress
