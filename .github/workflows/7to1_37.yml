@@ -77,7 +77,7 @@ jobs:
 
           mkdir -p output
 
-          $FFMPEG -y -i "$INPUT" -c:v libvvenc -qp 51 -pix_fmt yuv420p -vvenc-params "gopsize=8:intraperiod=8:decodingrefreshtype=idr:numrefpics=7:PicReordering=0" -an -f matroska - | $FFMPEG -y -fflags +genpts -i - -vsync 0 -pix_fmt yuv420p -f rawvideo output/${{ matrix.VIDEO_ID }}.yuv
+          $FFMPEG -y -i "$INPUT" -c:v libvvenc -qp 51 -pix_fmt yuv420p -vvenc-params "gopsize=8:intraperiod=8:decodingrefreshtype=idr:Numrefpics=7:PicReordering=0" -an -f matroska - | $FFMPEG -y -fflags +genpts -i - -vsync 0 -pix_fmt yuv420p -f rawvideo output/${{ matrix.VIDEO_ID }}.yuv
 
       # ----------------------------------------
       # Create sparse Inter4K dataset
