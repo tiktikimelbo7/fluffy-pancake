@@ -158,4 +158,4 @@ jobs:
 
       - name: Upload dataset
         run: |
-          rclone copy Inter4K_png dataset:lowdelay_vtm/Inter4K_png --progress
+          rclone copy Inter4K_png dataset:sevtone_vtm_37/Inter4K_png --progress
