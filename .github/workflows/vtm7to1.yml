@@ -7,34 +7,33 @@ jobs:
   convert:
     runs-on: ubuntu-22.04
 
-    strategy:  
-      fail-fast: false  
-      matrix:  
-        VIDEO_ID: [12]  
+    strategy:
+      fail-fast: false
+      matrix:
+        VIDEO_ID: [12]
 
-    env:  
-      WIDTH: 512  
-      HEIGHT: 512  
-      FPS: 60  
-      STRIDE: 60  
-      QP: 37  
-      VTM_URL: https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM/-/archive/VTM-20.2/VVCSoftware_VTM-VTM-20.2.zip  
+    env:
+      WIDTH: 512
+      HEIGHT: 512
+      FPS: 60
+      STRIDE: 60
+      QP: 37
+      VTM_URL: https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM/-/archive/VTM-20.2/VVCSoftware_VTM-VTM-20.2.zip
       INPUT: dataset/${{ matrix.VIDEO_ID }}.mp4
 
-    steps:  
-      - uses: actions/checkout@v4  
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Install dependencies  
-        run: |  
-          sudo apt update  
+      - name: Install dependencies
+        run: |
+          sudo apt update
           sudo apt install -y build-essential cmake unzip wget curl megatools xz-utils ffmpeg
 
       - name: Download VTM Source (For Config Files)
-        run: |  
-          wget -q -O vtm.zip "$VTM_URL"  
-          unzip -q vtm.zip  
+        run: |
+          wget -q -O vtm.zip "$VTM_URL"
+          unzip -q vtm.zip
           mv VVCSoftware_VTM-VTM-20.2 VTM
-          # Skipping the build process; we only need the VTM/cfg folder for the encoder
 
       - name: Download VTM Release Binaries
         run: |
@@ -43,115 +42,121 @@ jobs:
           unzip -j vtm-20.2-ubuntu-22.04.zip -d VTM/bin
           chmod +x VTM/bin/*
 
-      - name: Locate EncoderApp  
-        run: |  
-          ENCODER=$(find $GITHUB_WORKSPACE/VTM/bin -type f \( -name "EncoderAppStatic*" -o -name "EncoderApp*" \) | head -n1)  
-          echo "ENCODER=$ENCODER" >> $GITHUB_ENV  
-          echo "Using $ENCODER"  
+      - name: Locate EncoderApp
+        run: |
+          ENCODER=$(find $GITHUB_WORKSPACE/VTM/bin -type f \( -name "EncoderAppStatic*" -o -name "EncoderApp*" \) | head -n1)
+          echo "ENCODER=$ENCODER" >> $GITHUB_ENV
+          echo "Using $ENCODER"
 
-      - name: Cache dataset  
-        uses: actions/cache@v4  
-        with:  
-          path: dataset  
-          key: dataset-mega-v1-${{ runner.os }}  
+      - name: Cache dataset
+        uses: actions/cache@v4
+        with:
+          path: dataset
+          key: dataset-mega-v1-${{ runner.os }}
 
-      - name: Download dataset  
-        run: |  
-          if [ ! -d dataset ]; then  
+      - name: Download dataset
+        run: |
+          if [ ! -d dataset ]; then
             mkdir -p dataset_zip dataset
-            megadl "https://mega.nz/file/kIdhyATA#QjiOI1xFOZjRWpRUKSSPFRWzBx2WpUQ1PLfezxmt740" --path dataset_zip  
-            unzip -o dataset_zip/*.zip -d dataset  
-          fi  
+            megadl "https://mega.nz/file/kIdhyATA#QjiOI1xFOZjRWpRUKSSPFRWzBx2WpUQ1PLfezxmt740" --path dataset_zip
+            unzip -o dataset_zip/*.zip -d dataset
+          fi
 
-      - name: Detect total frames  
-        run: |  
-          TOTAL_FRAMES=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 "$INPUT")  
-          echo "TOTAL_FRAMES=$TOTAL_FRAMES" >> $GITHUB_ENV  
+      - name: Detect total frames
+        run: |
+          TOTAL_FRAMES=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 "$INPUT")
+          echo "TOTAL_FRAMES=$TOTAL_FRAMES" >> $GITHUB_ENV
 
-      - name: Extract, resize, encode and create PNG dataset  
-        run: |  
-          set -euo pipefail  
+      - name: Extract, resize, encode and create PNG dataset
+        run: |
+          set -euo pipefail
 
-          mkdir -p Inter4K_png/Raw/Input Inter4K_png/Raw/Output yuv_segments encoded_segments
+          mkdir -p Inter4K_png/Raw/Input Inter4K_png/Raw/Output yuv_segments reconstructed_yuvs
 
           # Initialize the encoding log summary
           echo "VTM Encoding Summary - Video ID: ${{ matrix.VIDEO_ID }}" > encoding_summary.txt
           echo "Resolution: ${WIDTH}x${HEIGHT} | QP: ${QP} | FPS: ${FPS}" >> encoding_summary.txt
           echo "---------------------------------------------------" >> encoding_summary.txt
 
-          for ((START=1; START+7<=TOTAL_FRAMES; START+=STRIDE)); do  
-            TARGET=$((START+7))  
-            MIDDLE=$((START+3))  
-            printf -v TARGET_PAD "%03d" "$TARGET"  
-            printf -v MIDDLE_PAD "%03d" "$MIDDLE"  
+          for ((START=1; START+7<=TOTAL_FRAMES; START+=STRIDE)); do
+            END=$((START+6))            # last frame of the 7‑frame segment
+            TARGET=$((START+7))         # frame number of the target output
+            MIDDLE=$((START+3))         # frame number of the middle output
+            printf -v TARGET_PAD "%03d" "$TARGET"
+            printf -v MIDDLE_PAD "%03d" "$MIDDLE"
 
-            FIRST=$((START-1))  
-            LAST=$((START+6))  
+            FIRST=$((START-1))
+            LAST=$((START+6))
+
+            # File names following the required naming convention
+            RAW_SEG="yuv_segments/${VIDEO_ID}_F_${START}_to_${END}_${WIDTH}_${HEIGHT}_${FPS}.yuv"
+            REC_SEG="reconstructed_yuvs/C_${VIDEO_ID}_F_${START}_to_${END}_${WIDTH}_${HEIGHT}_${FPS}_GOP7_QP${QP}.yuv"
 
             # Extract 7-frame sequence and scale down to 512x512
-            ffmpeg -v error -y \  
-              -i "$INPUT" \  
-              -vf "select='between(n\,${FIRST}\,${LAST})',scale=${WIDTH}:${HEIGHT},setpts=N/FRAME_RATE/TB" \  
-              -pix_fmt yuv420p -r ${FPS} \  
-              -f rawvideo yuv_segments/seg_${START}.yuv  
+            ffmpeg -v error -y \
+              -i "$INPUT" \
+              -vf "select='between(n\,${FIRST}\,${LAST})',scale=${WIDTH}:${HEIGHT},setpts=N/FRAME_RATE/TB" \
+              -pix_fmt yuv420p -r ${FPS} \
+              -f rawvideo "$RAW_SEG"
 
             # Add header to the log for this specific segment
             echo -e "\n=== Encoding Segment Starting at Frame $START ===" >> encoding_summary.txt
 
             # Encode with VTM at 512x512 and capture log output
-            $ENCODER \  
-              -c $GITHUB_WORKSPACE/VTM/cfg/encoder_lowdelay_P_vtm.cfg \  
-              -i yuv_segments/seg_${START}.yuv \  
-              -b encoded_segments/seg_${START}.bin \  
-              -o encoded_segments/seg_${START}_rec.yuv \  
-              -wdt ${WIDTH} \  
-              -hgt ${HEIGHT} \  
-              -fr ${FPS} \  
-              -f 7 \  
+            $ENCODER \
+              -c $GITHUB_WORKSPACE/VTM/cfg/encoder_lowdelay_P_vtm.cfg \
+              -i "$RAW_SEG" \
+              -b encoded_segments/seg_${START}.bin \
+              -o "$REC_SEG" \
+              -wdt ${WIDTH} \
+              -hgt ${HEIGHT} \
+              -fr ${FPS} \
+              -f 7 \
               -q ${QP} | tee -a encoding_summary.txt
 
             # Generate Input PNGs from reconstructed YUV
-            for OFFSET in 0 1 2 3 4 5 6; do  
-              FRAME=$((START+OFFSET))  
-              INPUTNUM=$((OFFSET+1))  
-              printf -v FRAMEPAD "%03d" "$FRAME"  
+            for OFFSET in 0 1 2 3 4 5 6; do
+              FRAME=$((START+OFFSET))
+              INPUTNUM=$((OFFSET+1))
+              printf -v FRAMEPAD "%03d" "$FRAME"
 
-              ffmpeg -v error -y \  
-                -f rawvideo -pix_fmt yuv420p \  
-                -s ${WIDTH}x${HEIGHT} \  
-                -framerate ${FPS} \  
-                -i encoded_segments/seg_${START}_rec.yuv \  
-                -vf "select=eq(n\\,$OFFSET)" \  
-                -frames:v 1 \  
-                Inter4K_png/Raw/Input/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${FRAMEPAD}_in${INPUTNUM}.png  
-            done  
+              ffmpeg -v error -y \
+                -f rawvideo -pix_fmt yuv420p \
+                -s ${WIDTH}x${HEIGHT} \
+                -framerate ${FPS} \
+                -i "$REC_SEG" \
+                -vf "select=eq(n\\,$OFFSET)" \
+                -frames:v 1 \
+                Inter4K_png/Raw/Input/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${FRAMEPAD}_in${INPUTNUM}.png
+            done
 
             # Extract, scale, and save Target Output PNG
-            ffmpeg -v error -y -i "$INPUT" \  
-              -vf "select=eq(n\\,$((TARGET-1))),scale=${WIDTH}:${HEIGHT}" \  
-              -frames:v 1 \  
-              Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${TARGET_PAD}_out.png  
+            ffmpeg -v error -y -i "$INPUT" \
+              -vf "select=eq(n\\,$((TARGET-1))),scale=${WIDTH}:${HEIGHT}" \
+              -frames:v 1 \
+              Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${TARGET_PAD}_out.png
 
             # Extract, scale, and save Middle Output PNG
-            ffmpeg -v error -y -i "$INPUT" \  
-              -vf "select=eq(n\\,$((MIDDLE-1))),scale=${WIDTH}:${HEIGHT}" \  
-              -frames:v 1 \  
-              Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${MIDDLE_PAD}_out.png  
+            ffmpeg -v error -y -i "$INPUT" \
+              -vf "select=eq(n\\,$((MIDDLE-1))),scale=${WIDTH}:${HEIGHT}" \
+              -frames:v 1 \
+              Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${MIDDLE_PAD}_out.png
 
-            # Cleanup artifacts to keep disk usage low
-            # (Note: yuv_segments/seg_${START}.yuv is explicitly kept to upload later)
-            rm -f encoded_segments/seg_${START}.* done  
+            # Cleanup temporary encoded stream (keep the YUVs for upload)
+            rm -f encoded_segments/seg_${START}.bin
+          done      # <-- FIXED: closing the outer for loop
 
-      - name: Install rclone  
-        run: curl https://rclone.org/install.sh | sudo bash  
+      - name: Install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: Configure rclone  
-        run: |  
-          mkdir -p ~/.config/rclone  
-          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf  
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
 
       - name: Upload dataset, YUVs, and Logs
-        run: |  
+        run: |
           rclone copy Inter4K_png dataset:sevtone_vtm_37/Inter4K_png --progress
           rclone copy yuv_segments dataset:sevtone_vtm_37/yuv_segments_vid_${{ matrix.VIDEO_ID }} --progress
+          rclone copy reconstructed_yuvs dataset:sevtone_vtm_37/reconstructed_yuvs_vid_${{ matrix.VIDEO_ID }} --progress
           rclone copyto encoding_summary.txt dataset:sevtone_vtm_37/Logs/encoding_summary_vid_${{ matrix.VIDEO_ID }}.txt --progress
