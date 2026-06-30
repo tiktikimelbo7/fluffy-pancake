@@ -30,7 +30,7 @@ jobs:
         id: app-cache
         uses: actions/cache@v4
         with:
-          path: VTM/build/bin
+          path: VTM/bin  # FIXED: VTM outputs executables to the root bin/ folder
           key: linux-vtm-apps-${{ env.VTM_VERSION }}
 
       - name: Configure
@@ -48,10 +48,12 @@ jobs:
 
       - name: Show executables
         run: |
-          find VTM/bin/umake/gcc-11.4/x86_64/release/ -type f -executable
+          # FIXED: Because we used CMake, binaries are directly in VTM/bin 
+          # rather than the umake/... directory structure.
+          find VTM/bin -type f -executable
 
       - name: Upload VTM Apps
         uses: actions/upload-artifact@v4
         with:
           name: VTM-20.2-Linux
-          path: VTM/build/bin/*
+          path: VTM/bin/* # FIXED: Uploading from the correct bin/ folder
