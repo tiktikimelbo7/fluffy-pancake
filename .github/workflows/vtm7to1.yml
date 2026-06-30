@@ -29,17 +29,23 @@ jobs:
           sudo apt update  
           sudo apt install -y build-essential cmake unzip wget curl megatools xz-utils ffmpeg
 
-      - name: Cache VTM  
-        id: cache-vtm  
-        uses: actions/cache@v4  
-        with:  
-          path: VTM  
-          key: vtm-20.2-v1  
+      - name: Download VTM Source (For Config Files)
+        run: |  
+          wget -q -O vtm.zip "$VTM_URL"  
+          unzip -q vtm.zip  
+          mv VVCSoftware_VTM-VTM-20.2 VTM
+          # Skipping the build process; we only need the VTM/cfg folder for the encoder
 
-      
+      - name: Download VTM Release Binaries
+        run: |
+          mkdir -p VTM/bin
+          wget -q https://github.com/${{ github.repository }}/releases/download/vtm-20.2-v1/vtm-20.2-ubuntu-22.04.zip
+          unzip -j vtm-20.2-ubuntu-22.04.zip -d VTM/bin
+          chmod +x VTM/bin/*
+
       - name: Locate EncoderApp  
         run: |  
-          ENCODER=$(find $GITHUB_WORKSPACE/VTM -type f \( -name EncoderAppStatic -o -name EncoderApp \) | head -n1)  
+          ENCODER=$(find $GITHUB_WORKSPACE/VTM/bin -type f \( -name "EncoderAppStatic*" -o -name "EncoderApp*" \) | head -n1)  
           echo "ENCODER=$ENCODER" >> $GITHUB_ENV  
           echo "Using $ENCODER"  
 
@@ -68,6 +74,11 @@ jobs:
 
           mkdir -p Inter4K_png/Raw/Input Inter4K_png/Raw/Output yuv_segments encoded_segments
 
+          # Initialize the encoding log summary
+          echo "VTM Encoding Summary - Video ID: ${{ matrix.VIDEO_ID }}" > encoding_summary.txt
+          echo "Resolution: ${WIDTH}x${HEIGHT} | QP: ${QP} | FPS: ${FPS}" >> encoding_summary.txt
+          echo "---------------------------------------------------" >> encoding_summary.txt
+
           for ((START=1; START+7<=TOTAL_FRAMES; START+=STRIDE)); do  
             TARGET=$((START+7))  
             MIDDLE=$((START+3))  
@@ -84,7 +95,10 @@ jobs:
               -pix_fmt yuv420p -r ${FPS} \  
               -f rawvideo yuv_segments/seg_${START}.yuv  
 
-            # Encode with VTM at 512x512
+            # Add header to the log for this specific segment
+            echo -e "\n=== Encoding Segment Starting at Frame $START ===" >> encoding_summary.txt
+
+            # Encode with VTM at 512x512 and capture log output
             $ENCODER \  
               -c $GITHUB_WORKSPACE/VTM/cfg/encoder_lowdelay_P_vtm.cfg \  
               -i yuv_segments/seg_${START}.yuv \  
@@ -94,7 +108,7 @@ jobs:
               -hgt ${HEIGHT} \  
               -fr ${FPS} \  
               -f 7 \  
-              -q ${QP}  
+              -q ${QP} | tee -a encoding_summary.txt
 
             # Generate Input PNGs from reconstructed YUV
             for OFFSET in 0 1 2 3 4 5 6; do  
@@ -125,7 +139,8 @@ jobs:
               Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${MIDDLE_PAD}_out.png  
 
             # Cleanup artifacts to keep disk usage low
-            rm -f yuv_segments/seg_${START}.yuv encoded_segments/seg_${START}.* done  
+            # (Note: yuv_segments/seg_${START}.yuv is explicitly kept to upload later)
+            rm -f encoded_segments/seg_${START}.* done  
 
       - name: Install rclone  
         run: curl https://rclone.org/install.sh | sudo bash  
@@ -135,6 +150,8 @@ jobs:
           mkdir -p ~/.config/rclone  
           echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf  
 
-      - name: Upload dataset  
+      - name: Upload dataset, YUVs, and Logs
         run: |  
           rclone copy Inter4K_png dataset:sevtone_vtm_37/Inter4K_png --progress
+          rclone copy yuv_segments dataset:sevtone_vtm_37/yuv_segments_vid_${{ matrix.VIDEO_ID }} --progress
+          rclone copyto encoding_summary.txt dataset:sevtone_vtm_37/Logs/encoding_summary_vid_${{ matrix.VIDEO_ID }}.txt --progress
