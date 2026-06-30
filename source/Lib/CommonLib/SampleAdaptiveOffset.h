@@ -1,136 +1,153 @@
-/* The copyright in this software is being made available under the BSD
- * License, included below. This software may be subject to other third party
- * and contributor rights, including patent rights, and no such rights are
- * granted under this license.
- *
- * Copyright (c) 2010-2025, ITU/ISO/IEC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
- *    be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
- * THE POSSIBILITY OF SUCH DAMAGE.
- */
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
 
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
 /** \file     SampleAdaptiveOffset.h
     \brief    sample adaptive offset class (header)
 */
 
-#ifndef __SAMPLEADAPTIVEOFFSET__
-#define __SAMPLEADAPTIVEOFFSET__
+#pragma once
 
 #include "CommonDef.h"
 #include "Unit.h"
-#include "Reshape.h"
+
 //! \ingroup CommonLib
 //! \{
 
+namespace vvenc {
+
+#if defined(TARGET_SIMD_X86)  && ENABLE_SIMD_OPT_SAO
+using namespace x86_simd;
+#endif
+
+template<typename T> static inline int sgn( T val )
+{
+  return ( T( 0 ) < val ) - ( val < T( 0 ) );
+}
 
 // ====================================================================================================================
 // Constants
 // ====================================================================================================================
 
-static constexpr int MAX_SAO_TRUNCATED_BITDEPTH = 10;
+#define MAX_SAO_TRUNCATED_BITDEPTH     10
 
 // ====================================================================================================================
 // Class definition
 // ====================================================================================================================
 
+  enum Available
+  {
+    LeftAvail = 1,
+    RightAvail = 2,
+    AboveAvail = 4,
+    BelowAvail = 8,
+    AboveLeftAvail = 16,
+    AboveRightAvail = 32,
+    BelowLeftAvail = 64,
+    BelowRightAvail = 128,
+  };
+
 class SampleAdaptiveOffset
 {
 public:
-  SampleAdaptiveOffset();
+  SampleAdaptiveOffset( bool enableOpt = true );
   virtual ~SampleAdaptiveOffset();
+  void        init            ( ChromaFormat format, uint32_t maxCUWidth, uint32_t maxCUHeight, uint32_t lumaBitShift, uint32_t chromaBitShift );
+  static int  getMaxOffsetQVal( const int channelBitDepth) { return (1<<(std::min<int>(channelBitDepth,MAX_SAO_TRUNCATED_BITDEPTH)-5))-1; } //Table 9-32, inclusive
 
-  void SAOProcess(CodingStructure &cs, SAOBlkParam *saoBlkParams);
-  void create(int picWidth, int picHeight, ChromaFormat format, uint32_t maxCUWidth, uint32_t maxCUHeight,
-              uint32_t maxCUDepth, uint32_t lumaBitShift, uint32_t chromaBitShift);
-  void setReshaper(Reshape *p) { m_pcReshape = p; }
-  void destroy();
-
-  static int getMaxOffsetQVal(const int channelBitDepth)
-  {
-    return (1 << (std::min<int>(channelBitDepth, MAX_SAO_TRUNCATED_BITDEPTH) - 5)) - 1;
-  }   // Table 9-32, inclusive
+  void ( *calcSaoStatisticsBo )( int width, int endX, int endY, Pel* srcLine, Pel* orgLine, int srcStride,
+                                 int orgStride, int channelBitDepth, int64_t* count, int64_t* diff );
 
 protected:
-  using MergeBlkParams = EnumArray<SAOBlkParam *, SAOModeMergeTypes>;
+  void deriveLoopFilterBoundaryAvailibility( CodingStructure& cs, const Position& pos, uint8_t& availMask ) const;
 
-  void deriveLoopFilterBoundaryAvailability(CodingStructure &cs, const Position &pos, bool &isLeftAvail,
-                                            bool &isRightAvail, bool &isAboveAvail, bool &isBelowAvail,
-                                            bool &isAboveLeftAvail, bool &isAboveRightAvail, bool &isBelowLeftAvail,
-                                            bool &isBelowRightAvail) const;
+  void (*offsetBlock) ( const int     channelBitDepth,
+                        const ClpRng& clpRng,
+                        int           typeIdx,
+                        int*          offset,
+                        int           startIdx,
+                        const Pel*    srcBlk,
+                        Pel*          resBlk,
+                        ptrdiff_t     srcStride,
+                        ptrdiff_t     resStride,
+                        int           width,
+                        int           height,
+                        uint8_t       availMask,
+                        std::vector<int8_t> &signLineBuf1,
+                        std::vector<int8_t> &signLineBuf2);
 
-  void offsetBlock(const int channelBitDepth, const ClpRng &clpRng, SAOModeNewTypes typeIdx, int *offset,
-                   const Pel *srcBlk, Pel *resBlk, ptrdiff_t srcStride, ptrdiff_t resStride, int width, int height,
-                   bool isLeftAvail, bool isRightAvail, bool isAboveAvail, bool isBelowAvail, bool isAboveLeftAvail,
-                   bool isAboveRightAvail, bool isBelowLeftAvail, bool isBelowRightAvail,
-                   bool isCtuCrossedByVirtualBoundaries, int horVirBndryPos[], int verVirBndryPos[], int numHorVirBndry,
-                   int numVerVirBndry);
-  void invertQuantOffsets(ComponentID compIdx, SAOModeNewTypes typeIdc, int typeAuxInfo, int *dstOffsets,
-                          int *srcOffsets);
-  void reconstructBlkSAOParam(SAOBlkParam &recParam, MergeBlkParams &mergeList);
-  int  getMergeList(CodingStructure &cs, int ctuRsAddr, SAOBlkParam *blkParams, MergeBlkParams &mergeList);
-  void offsetCTU(const UnitArea &area, const CPelUnitBuf &src, PelUnitBuf &res, SAOBlkParam &saoblkParam,
-                 CodingStructure &cs);
-  void xReconstructBlkSAOParams(CodingStructure &cs, SAOBlkParam *saoBlkParams);
-  bool isCrossedByVirtualBoundaries(const int xPos, const int yPos, const int width, const int height,
-                                    int &numHorVirBndry, int &numVerVirBndry, int horVirBndryPos[],
-                                    int verVirBndryPos[], const PicHeader *picHeader);
-  bool isProcessDisabled(int xPos, int yPos, int numVerVirBndry, int numHorVirBndry, int verVirBndryPos[],
-                         int horVirBndryPos[])
-  {
-    bool disabledFlag = false;
-    for (int i = 0; i < numVerVirBndry; i++)
-    {
-      if ((xPos == verVirBndryPos[i]) || (xPos == verVirBndryPos[i] - 1))
-      {
-        disabledFlag = true;
-        break;
-      }
-    }
-    for (int i = 0; i < numHorVirBndry; i++)
-    {
-      if ((yPos == horVirBndryPos[i]) || (yPos == horVirBndryPos[i] - 1))
-      {
-        disabledFlag = true;
-        break;
-      }
-    }
-    return disabledFlag;
-  }
-  Reshape *m_pcReshape;
+
+  void (*calcSaoStatisticsEo0) (int width,int startX,int endX,int endY,Pel*  srcLine,Pel*  orgLine,int srcStride,int orgStride, int64_t *count,int64_t  *diff);
+  void (*calcSaoStatisticsEo90) (int width,int endX,int startY,int endY,Pel*  srcLine,Pel*  orgLine,int srcStride,int orgStride,int64_t  *count, int64_t *diff,int8_t *signUpLine);
+  void (*calcSaoStatisticsEo135) (int width,int startX,int endX,int endY,Pel*  srcLine,Pel*  orgLine,int srcStride,int orgStride,int64_t  *count, int64_t *diff,int8_t *signUpLine,int8_t *signDownLine);
+  void (*calcSaoStatisticsEo45) (int width,int startX,int endX,int endY,Pel*  srcLine,Pel*  orgLine,int srcStride,int orgStride,int64_t  *count, int64_t *diff,int8_t *signUpLine);
+
+  void invertQuantOffsets       (ComponentID compIdx, int typeIdc, int typeAuxInfo, int* dstOffsets, int* srcOffsets);
+  void reconstructBlkSAOParam   (SAOBlkParam& recParam, SAOBlkParam* mergeList[NUM_SAO_MERGE_TYPES]);
+  int  getMergeList             (CodingStructure& cs, int ctuRsAddr, SAOBlkParam* blkParams, SAOBlkParam* mergeList[NUM_SAO_MERGE_TYPES]);
+  void offsetCTU                (const UnitArea& area, const CPelUnitBuf& src, PelUnitBuf& res, SAOBlkParam& saoblkParam, CodingStructure& cs);
+  void xReconstructBlkSAOParams (CodingStructure& cs, SAOBlkParam* saoBlkParams);
+
+#if defined(TARGET_SIMD_X86)  && ENABLE_SIMD_OPT_SAO
+  void initSampleAdaptiveOffsetX86();
+  template <X86_VEXT vext>
+  void _initSampleAdaptiveOffsetX86();
+#endif
+#if defined( TARGET_SIMD_ARM ) && ENABLE_SIMD_OPT_SAO
+  void initSampleAdaptiveOffsetARM();
+  template<ARM_VEXT vext>
+  void _initSampleAdaptiveOffsetARM();
+#endif
 
 protected:
-  uint32_t m_offsetStepLog2[MAX_NUM_COMPONENT]; //offset step
-  PelStorage m_tempBuf;
-  uint32_t m_numberOfComponents;
+  uint32_t    m_offsetStepLog2[MAX_NUM_COMP]; //offset step
+  uint32_t    m_numberOfComponents;
 
   std::vector<int8_t> m_signLineBuf1;
   std::vector<int8_t> m_signLineBuf2;
+
 private:
-  bool m_picSAOEnabled[MAX_NUM_COMPONENT];
+  bool m_picSAOEnabled[MAX_NUM_COMP];
 };
 
+} // namespace vvenc
+
 //! \}
-#endif
 

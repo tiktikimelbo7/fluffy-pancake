@@ -1,140 +1,121 @@
-/* The copyright in this software is being made available under the BSD
- * License, included below. This software may be subject to other third party
- * and contributor rights, including patent rights, and no such rights are
- * granted under this license.
- *
- * Copyright (c) 2010-2025, ITU/ISO/IEC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
- *    be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
- * THE POSSIBILITY OF SUCH DAMAGE.
- */
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
+
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
+
 
 /** \file     ContextModelling.cpp
     \brief    Classes providing probability descriptions and contexts
 */
-
-#include <algorithm>
 
 #include "ContextModelling.h"
 #include "UnitTools.h"
 #include "CodingStructure.h"
 #include "Picture.h"
 
-const int CoeffCodingContext::prefixCtx[8] = { 0, 0, 0, 3, 6, 10, 15, 21 };
+//! \ingroup CommonLib
+//! \{
+  
+namespace vvenc {
 
-CoeffCodingContext::CoeffCodingContext(const TransformUnit &tu, ComponentID component, bool signHide,
-                                       const BdpcmMode bdpcm)
-  : m_compID(component)
-  , m_chType(toChannelType(m_compID))
-  , m_width(tu.block(m_compID).width)
-  , m_height(tu.block(m_compID).height)
-  , m_log2CGWidth(g_log2TxSubblockSize[floorLog2(m_width)][floorLog2(m_height)].width)
-  , m_log2CGHeight(g_log2TxSubblockSize[floorLog2(m_width)][floorLog2(m_height)].height)
-  , m_log2CGSize(m_log2CGWidth + m_log2CGHeight)
-  , m_widthInGroups(getNonzeroTuSize(m_width) >> m_log2CGWidth)
-  , m_heightInGroups(getNonzeroTuSize(m_height) >> m_log2CGHeight)
-  , m_log2BlockWidth((unsigned) floorLog2(m_width))
-  , m_log2BlockHeight((unsigned) floorLog2(m_height))
-  , m_maxNumCoeff(m_width * m_height)
-  , m_signHiding(signHide)
-  , m_extendedPrecision(tu.cs->sps->getSpsRangeExtension().getExtendedPrecisionProcessingFlag())
-  , m_maxLog2TrDynamicRange(tu.cs->sps->getMaxLog2TrDynamicRange(m_chType))
-  , m_scan(g_scanOrder[SCAN_GROUPED_4x4][CoeffScanType::DIAG][gp_sizeIdxInfo->idxFrom(m_width)]
-                      [gp_sizeIdxInfo->idxFrom(m_height)])
-  , m_scanCG(g_scanOrder[SCAN_UNGROUPED][CoeffScanType::DIAG][gp_sizeIdxInfo->idxFrom(m_widthInGroups)]
-                        [gp_sizeIdxInfo->idxFrom(m_heightInGroups)])
-  , m_CtxSetLastX(Ctx::LastX[to_underlying(m_chType)])
-  , m_CtxSetLastY(Ctx::LastY[to_underlying(m_chType)])
-  , m_maxLastPosX(g_groupIdx[getNonzeroTuSize(m_width) - 1])
-  , m_maxLastPosY(g_groupIdx[getNonzeroTuSize(m_height) - 1])
-  , m_lastOffsetX(0)
-  , m_lastOffsetY(0)
-  , m_lastShiftX(0)
-  , m_lastShiftY(0)
-  , m_minCoeff(-(1 << tu.cs->sps->getMaxLog2TrDynamicRange(m_chType)))
-  , m_maxCoeff((1 << tu.cs->sps->getMaxLog2TrDynamicRange(m_chType)) - 1)
-  , m_scanPosLast(-1)
-  , m_subSetId(-1)
-  , m_subSetPos(-1)
-  , m_subSetPosX(-1)
-  , m_subSetPosY(-1)
-  , m_minSubPos(-1)
-  , m_maxSubPos(-1)
-  , m_sigGroupCtxId(-1)
-  , m_tmplCpSum1(-1)
-  , m_tmplCpDiag(-1)
-  , m_sigFlagCtxSet{ Ctx::SigFlag[to_underlying(m_chType)], Ctx::SigFlag[to_underlying(m_chType) + 2],
-                     Ctx::SigFlag[to_underlying(m_chType) + 4] }
-  , m_parFlagCtxSet(Ctx::ParFlag[to_underlying(m_chType)])
-  , m_gtxFlagCtxSet{ Ctx::GtxFlag[to_underlying(m_chType)], Ctx::GtxFlag[to_underlying(m_chType) + 2] }
-  , m_sigGroupCtxIdTS(-1)
-  , m_tsSigFlagCtxSet(Ctx::TsSigFlag)
-  , m_tsParFlagCtxSet(Ctx::TsParFlag)
-  , m_tsGtxFlagCtxSet(Ctx::TsGtxFlag)
-  , m_tsLrg1FlagCtxSet(Ctx::TsLrg1Flag)
-  , m_tsSignFlagCtxSet(Ctx::TsResidualSign)
-  , m_sigCoeffGroupFlag()
-  , m_bdpcm(bdpcm)
+static const int prefix_ctx[7]  = { 0, 0, 0, 3, 6, 10, 15 };
+
+CoeffCodingContext::CoeffCodingContext( const TransformUnit& tu, ComponentID component, bool signHide, bool bdpcm, CtxTpl* tplBuf )
+  : m_compID                    (component)
+  , m_chType                    (toChannelType(m_compID))
+  , m_width                     (tu.block(m_compID).width)
+  , m_height                    (tu.block(m_compID).height)
+  , m_log2CGWidth               ( g_log2SbbSize[ Log2(m_width) ][ Log2(m_height) ][0] )
+  , m_log2CGHeight              ( g_log2SbbSize[ Log2(m_width) ][ Log2(m_height) ][1] )
+  , m_log2CGSize                (m_log2CGWidth + m_log2CGHeight)
+  , m_widthInGroups             (std::min<unsigned>(JVET_C0024_ZERO_OUT_TH, m_width) >> m_log2CGWidth)
+  , m_heightInGroups            (std::min<unsigned>(JVET_C0024_ZERO_OUT_TH, m_height) >> m_log2CGHeight)
+  , m_log2WidthInGroups         (Log2(m_widthInGroups))
+  , m_log2BlockWidth            (Log2(m_width))
+  , m_log2BlockHeight           (Log2(m_height))
+  , m_maxNumCoeff               (m_width * m_height)
+  , m_signHiding                (signHide)
+  , m_maxLog2TrDynamicRange     (tu.cs->sps->getMaxLog2TrDynamicRange())
+  , m_scan                      (getScanOrder( SCAN_GROUPED_4x4, m_log2BlockWidth, m_log2BlockHeight ))
+  , m_scanCG                    (getScanOrder( SCAN_UNGROUPED  , Log2(m_widthInGroups), Log2(m_heightInGroups)))
+  , m_CtxSetLastX               (Ctx::LastX[m_chType])
+  , m_CtxSetLastY               (Ctx::LastY[m_chType])
+  , m_maxLastPosX               (g_uiGroupIdx[std::min<unsigned>(JVET_C0024_ZERO_OUT_TH, m_width) - 1])
+  , m_maxLastPosY               (g_uiGroupIdx[std::min<unsigned>(JVET_C0024_ZERO_OUT_TH, m_height) - 1])
+  , m_lastOffsetX               ((m_chType == CH_C) ? 0 :prefix_ctx[ m_log2BlockWidth ])
+  , m_lastOffsetY               ((m_chType == CH_C) ? 0 :prefix_ctx[ m_log2BlockHeight ])
+  , m_lastShiftX                ((m_chType == CH_C) ? Clip3( 0, 2, int( m_width >> 3) )  : (m_log2BlockWidth + 1) >> 2)
+  , m_lastShiftY                ((m_chType == CH_C) ? Clip3( 0, 2, int( m_height >> 3) ) : (m_log2BlockHeight + 1) >> 2)
+  , m_scanPosLast               (-1)
+  , m_subSetId                  (-1)
+  , m_subSetPos                 (-1)
+  , m_subSetPosX                (-1)
+  , m_subSetPosY                (-1)
+  , m_minSubPos                 (-1)
+  , m_maxSubPos                 (-1)
+  , m_sigGroupCtxId             (-1)
+  , m_tmplCpSum1                (-1)
+  , m_tmplCpDiag                (-1)
+  , m_sigFlagCtxSet             { Ctx::SigFlag[m_chType], Ctx::SigFlag[m_chType+2], Ctx::SigFlag[m_chType+4] }
+  , m_parFlagCtxSet             ( Ctx::ParFlag[m_chType] )
+  , m_gtxFlagCtxSet             { Ctx::GtxFlag[m_chType], Ctx::GtxFlag[m_chType+2] }
+  , m_sigGroupCtxIdTS           (-1)
+  , m_tsSigFlagCtxSet           ( Ctx::TsSigFlag )
+  , m_tsParFlagCtxSet           ( Ctx::TsParFlag )
+  , m_tsGtxFlagCtxSet           ( Ctx::TsGtxFlag )
+  , m_tsLrg1FlagCtxSet          (Ctx::TsLrg1Flag)
+  , m_tsSignFlagCtxSet          (Ctx::TsResidualSign)
+  , m_sigCoeffGroupFlag         ()
+  , m_bdpcm                     (bdpcm)
+  , m_tplBuf                    (tplBuf + m_width * m_height - 1)
 {
-  // LOGTODO
-  unsigned log2sizeX = m_log2BlockWidth;
-  unsigned log2sizeY = m_log2BlockHeight;
-  if (m_chType == ChannelType::CHROMA)
-  {
-    const_cast<int&>(m_lastShiftX) = Clip3( 0, 2, int( m_width  >> 3) );
-    const_cast<int&>(m_lastShiftY) = Clip3( 0, 2, int( m_height >> 3) );
-  }
-  else
-  {
-    const_cast<int &>(m_lastOffsetX) = prefixCtx[log2sizeX];
-    const_cast<int &>(m_lastOffsetY) = prefixCtx[log2sizeY];
-
-    const_cast<int&>(m_lastShiftX)  = (log2sizeX + 1) >> 2;
-    const_cast<int&>(m_lastShiftY)  = (log2sizeY + 1) >> 2;
-  }
-
-  m_cctxBaseLevel = 4; // default value for RRC rice derivation in VVCv1, is updated for extended RRC rice derivation
-  m_histValue = 0;  // default value for RRC rice derivation in VVCv1, is updated for history-based extention of RRC rice derivation
-  m_updateHist = 0;  // default value for RRC rice derivation (history update is disabled), is updated for history-based extention of RRC rice derivation
-
-  if (tu.cs->sps->getSpsRangeExtension().getRrcRiceExtensionEnableFlag())
-  {
-    deriveRiceRRC = &CoeffCodingContext::deriveRiceExt;
-  }
-  else
-  {
-    deriveRiceRRC = &CoeffCodingContext::deriveRice;
-  }
+  if( tplBuf && ( tu.mtsIdx[ component ] != MTS_SKIP || tu.cu->slice->tsResidualCodingDisabled ) )
+    memset( tplBuf, 0, m_width * m_height * sizeof( CtxTpl ) );
 }
 
 void CoeffCodingContext::initSubblock( int SubsetId, bool sigGroupFlag )
 {
   m_subSetId                = SubsetId;
   m_subSetPos               = m_scanCG[m_subSetId].idx;
-  m_subSetPosY              = m_subSetPos / m_widthInGroups;
-  m_subSetPosX              = m_subSetPos - ( m_subSetPosY * m_widthInGroups );
+  m_subSetPosY              = m_subSetPos >> m_log2WidthInGroups;
+  m_subSetPosX              = m_subSetPos - ( m_subSetPosY << m_log2WidthInGroups );
   m_minSubPos               = m_subSetId << m_log2CGSize;
   m_maxSubPos               = m_minSubPos + ( 1 << m_log2CGSize ) - 1;
   if( sigGroupFlag )
@@ -145,96 +126,57 @@ void CoeffCodingContext::initSubblock( int SubsetId, bool sigGroupFlag )
   unsigned  CGPosX    = m_subSetPosX;
   unsigned  sigRight  = unsigned( ( CGPosX + 1 ) < m_widthInGroups  ? m_sigCoeffGroupFlag[ m_subSetPos + 1               ] : false );
   unsigned  sigLower  = unsigned( ( CGPosY + 1 ) < m_heightInGroups ? m_sigCoeffGroupFlag[ m_subSetPos + m_widthInGroups ] : false );
-  m_sigGroupCtxId     = Ctx::SigCoeffGroup[to_underlying(m_chType)](sigRight | sigLower);
+  m_sigGroupCtxId     = Ctx::SigCoeffGroup[m_chType]( sigRight | sigLower );
   unsigned  sigLeft   = unsigned( CGPosX > 0 ? m_sigCoeffGroupFlag[m_subSetPos - 1              ] : false );
   unsigned  sigAbove  = unsigned( CGPosY > 0 ? m_sigCoeffGroupFlag[m_subSetPos - m_widthInGroups] : false );
   m_sigGroupCtxIdTS   = Ctx::TsSigCoeffGroup( sigLeft  + sigAbove );
 }
 
 
-unsigned DeriveCtx::CtxModeConsFlag( const CodingStructure& cs, Partitioner& partitioner )
+void DeriveCtx::determineNeighborCus( const CodingStructure& cs, const UnitArea& ua, const ChannelType ch, const TreeType _treeType )
 {
-  assert(isLuma(partitioner.chType));
-  const Position pos         = partitioner.currArea().block(partitioner.chType);
-  const unsigned curSliceIdx = cs.slice->getIndependentSliceIdx();
-  const TileIdx curTileIdx = cs.pps->getTileIdx( partitioner.currArea().lumaPos() );
+  const Position& posLuma    = ua.lumaPos();
+  const Position& pos        = ch == CH_L ? posLuma : ua.chromaPos();
+  const uint32_t curSliceIdx = cs.slice->independentSliceIdx;
+  const uint32_t curTileIdx  = cs.pps->getTileIdx( posLuma );
 
-  const CodingUnit* cuLeft = cs.getCURestricted( pos.offset( -1, 0 ), pos, curSliceIdx, curTileIdx, partitioner.chType );
-  const CodingUnit* cuAbove = cs.getCURestricted( pos.offset( 0, -1 ), pos, curSliceIdx, curTileIdx, partitioner.chType );
-
-  unsigned ctxId = ((cuAbove && CU::isIntra(*cuAbove)) || (cuLeft && CU::isIntra(*cuLeft))) ? 1 : 0;
-  return ctxId;
+  cuRestrictedLeft[ch]  = cs.getCURestricted( pos.offset(-1, 0), pos, curSliceIdx, curTileIdx, ch, _treeType );
+  cuRestrictedAbove[ch] = cs.getCURestricted( pos.offset(0, -1), pos, curSliceIdx, curTileIdx, ch, _treeType );
 }
 
-
-void DeriveCtx::CtxSplit( const CodingStructure& cs, Partitioner& partitioner, unsigned& ctxSpl, unsigned& ctxQt, unsigned& ctxHv, unsigned& ctxHorBt, unsigned& ctxVerBt, bool* _canSplit /*= nullptr */ )
+void DeriveCtx::CtxSplit( const Partitioner& partitioner, unsigned& ctxSpl, unsigned& ctxQt, unsigned& ctxHv, unsigned& ctxHorBt, unsigned& ctxVerBt, const bool canSplit[6] ) const
 {
-  const Position pos         = partitioner.currArea().block(partitioner.chType);
-  const unsigned curSliceIdx = cs.slice->getIndependentSliceIdx();
-  const TileIdx curTileIdx  = cs.pps->getTileIdx( partitioner.currArea().lumaPos() );
-
-  // get left depth
-  const CodingUnit* cuLeft = cs.getCURestricted( pos.offset( -1, 0 ), pos, curSliceIdx, curTileIdx, partitioner.chType );
-
-  // get above depth
-  const CodingUnit* cuAbove = cs.getCURestricted( pos.offset( 0, -1 ), pos, curSliceIdx, curTileIdx, partitioner.chType );
-
-  bool canSplit[6];
-
-  if( _canSplit == nullptr )
-  {
-    partitioner.canSplit( cs, canSplit[0], canSplit[1], canSplit[2], canSplit[3], canSplit[4], canSplit[5] );
-  }
-  else
-  {
-    memcpy( canSplit, _canSplit, 6 * sizeof( bool ) );
-  }
+  const ChannelType chType  = partitioner.chType;
+  const CodingUnit* cuLeft  = cuRestrictedLeft[chType];
+  const CodingUnit* cuAbove = cuRestrictedAbove[chType];
 
   ///////////////////////
   // CTX do split (0-8)
   ///////////////////////
-  const unsigned widthCurr  = partitioner.currArea().block(partitioner.chType).width;
-  const unsigned heightCurr = partitioner.currArea().block(partitioner.chType).height;
+  const unsigned widthCurr  = partitioner.currArea().blocks[chType].width;
+  const unsigned heightCurr = partitioner.currArea().blocks[chType].height;
 
   ctxSpl = 0;
 
   if( cuLeft )
   {
-    const unsigned heightLeft = cuLeft->block(partitioner.chType).height;
+    const unsigned heightLeft = cuLeft->blocks[chType].height;
     ctxSpl += ( heightLeft < heightCurr ? 1 : 0 );
   }
   if( cuAbove )
   {
-    const unsigned widthAbove = cuAbove->block(partitioner.chType).width;
+    const unsigned widthAbove = cuAbove->blocks[chType].width;
     ctxSpl += ( widthAbove < widthCurr ? 1 : 0 );
   }
 
   unsigned numSplit = 0;
-  if (canSplit[1])
-  {
-    numSplit += 2;
-  }
-  if (canSplit[2])
-  {
-    numSplit += 1;
-  }
-  if (canSplit[3])
-  {
-    numSplit += 1;
-  }
-  if (canSplit[4])
-  {
-    numSplit += 1;
-  }
-  if (canSplit[5])
-  {
-    numSplit += 1;
-  }
+  if( canSplit[1] ) numSplit += 2;
+  if( canSplit[2] ) numSplit += 1;
+  if( canSplit[3] ) numSplit += 1;
+  if( canSplit[4] ) numSplit += 1;
+  if( canSplit[5] ) numSplit += 1;
 
-  if (numSplit > 0)
-  {
-    numSplit--;
-  }
+  if( numSplit > 0 ) numSplit--;
 
   ctxSpl += 3 * ( numSplit >> 1 );
 
@@ -255,26 +197,17 @@ void DeriveCtx::CtxSplit( const CodingStructure& cs, Partitioner& partitioner, u
 
   if( numVer == numHor )
   {
-    const Area &area = partitioner.currArea().block(partitioner.chType);
+    const Area& area = partitioner.currArea().blocks[chType];
 
-    const unsigned wAbove = cuAbove ? cuAbove->block(partitioner.chType).width : 1;
-    const unsigned hLeft  = cuLeft ? cuLeft->block(partitioner.chType).height : 1;
+    const unsigned wAbove       = cuAbove ? cuAbove->blocks[chType].width  : 1;
+    const unsigned hLeft        = cuLeft  ? cuLeft ->blocks[chType].height : 1;
 
     const unsigned depAbove     = area.width / wAbove;
     const unsigned depLeft      = area.height / hLeft;
 
-    if (depAbove == depLeft || !cuLeft || !cuAbove)
-    {
-      ctxHv = 0;
-    }
-    else if (depAbove < depLeft)
-    {
-      ctxHv = 1;
-    }
-    else
-    {
-      ctxHv = 2;
-    }
+    if( depAbove == depLeft || !cuLeft || !cuAbove ) ctxHv = 0;
+    else if( depAbove < depLeft ) ctxHv = 1;
+    else ctxHv = 2;
   }
   else if( numVer < numHor )
   {
@@ -292,86 +225,191 @@ void DeriveCtx::CtxSplit( const CodingStructure& cs, Partitioner& partitioner, u
   ctxVerBt = ( partitioner.currMtDepth <= 1 ? 3 : 2 );
 }
 
-unsigned DeriveCtx::CtxQtCbf( const ComponentID compID, const bool prevCbf, const int ispIdx )
+
+
+void MergeCtx::setMergeInfo( CodingUnit& cu, int candIdx ) const
 {
-  if( ispIdx && isLuma( compID ) )
+  CHECK( candIdx >= numValidMergeCand, "Merge candidate does not exist" );
+  cu.mergeFlag                  = true;
+  cu.mmvdMergeFlag              = false;
+  cu.interDir                   = interDirNeighbours[candIdx];
+  cu.imv                        = (!cu.geo && useAltHpelIf[candIdx]) ? IMV_HPEL : IMV_OFF;
+  cu.mergeIdx                   = candIdx;
+  cu.mergeType                  = mrgTypeNeighbours[candIdx];
+  cu.mv     [REF_PIC_LIST_0][0] = mvFieldNeighbours[candIdx][0].mv;
+  cu.mv     [REF_PIC_LIST_1][0] = mvFieldNeighbours[candIdx][1].mv;
+  cu.mvd    [REF_PIC_LIST_0][0] = Mv();
+  cu.mvd    [REF_PIC_LIST_1][0] = Mv();
+  cu.refIdx [REF_PIC_LIST_0]    = mvFieldNeighbours[candIdx][0].refIdx;
+  cu.refIdx [REF_PIC_LIST_1]    = mvFieldNeighbours[candIdx][1].refIdx;
+  cu.mvpIdx [REF_PIC_LIST_0]    = NOT_VALID;
+  cu.mvpIdx [REF_PIC_LIST_1]    = NOT_VALID;
+  cu.mvpNum [REF_PIC_LIST_0]    = NOT_VALID;
+  cu.mvpNum [REF_PIC_LIST_1]    = NOT_VALID;
+  if( CU::isIBC( cu ) )
   {
-    return 2 + (int)prevCbf;
+    cu.imv                      = cu.imv == IMV_HPEL ? IMV_OFF : cu.imv;
   }
-  if( compID == COMPONENT_Cr )
+  cu.BcwIdx                     = interDirNeighbours[candIdx] == 3 ? BcwIdx[candIdx] : BCW_DEFAULT;
+  cu.mcControl                  = 0;
+  cu.mvRefine                   = false;
+
+  CU::restrictBiPredMergeCandsOne( cu );
+}
+
+
+void MergeCtx::getMmvdDeltaMv( const Slice &slice, const MmvdIdx candIdx, Mv deltaMv[ NUM_REF_PIC_LIST_01 ] ) const
+{
+  const int mvdBaseIdx  = candIdx.pos.baseIdx;
+  const int mvdStep     = candIdx.pos.step;
+  const int mvdPosition = candIdx.pos.position;
+
+  int offset = 1 << ( mvdStep + MV_FRACTIONAL_BITS_DIFF );
+  if( slice.picHeader->disFracMMVD )
   {
-    return ( prevCbf ? 1 : 0 );
+    offset <<= 2;
+}
+  const int refList0 = mmvdBaseMv[mvdBaseIdx][REF_PIC_LIST_0].refIdx;
+  const int refList1 = mmvdBaseMv[mvdBaseIdx][REF_PIC_LIST_1].refIdx;
+
+  const Mv dMvTable[ 4 ] = { Mv( offset,0 ), Mv( -offset,0 ), Mv( 0, offset ), Mv( 0, -offset ) };
+  if( ( refList0 != -1 ) && ( refList1 != -1 ) )
+  {
+    const int poc0 = slice.getRefPOC( REF_PIC_LIST_0, refList0 );
+    const int poc1 = slice.getRefPOC( REF_PIC_LIST_1, refList1 );
+    const int currPoc = slice.poc;
+
+    deltaMv[0] = dMvTable[mvdPosition];
+
+    if( ( poc0 - currPoc ) == ( poc1 - currPoc ) )
+    {
+      deltaMv[1] = deltaMv[0];
+    }
+    else if( abs( poc1 - currPoc ) > abs( poc0 - currPoc ) )
+    {
+      const int scale            = CU::getDistScaleFactor( currPoc, poc0, currPoc, poc1 );
+      const bool isL0RefLongTerm = slice.getRefPic(REF_PIC_LIST_0, refList0)->isLongTerm;
+      const bool isL1RefLongTerm = slice.getRefPic(REF_PIC_LIST_1, refList1)->isLongTerm;
+      deltaMv[1]                 = deltaMv[0];
+
+      if( isL0RefLongTerm || isL1RefLongTerm )
+      {
+        if( ( poc1 - currPoc ) * ( poc0 - currPoc ) > 0 )
+        {
+          deltaMv[0] = deltaMv[1];
+        }
+        else
+        {
+          deltaMv[0].set( -1 * deltaMv[1].hor, -1 * deltaMv[1].ver );
+        }
+      }
+      else
+      {
+        deltaMv[0] = deltaMv[1].scaleMv( scale );
+      }
+    }
+    else
+    {
+      const int scale            = CU::getDistScaleFactor(currPoc, poc1, currPoc, poc0);
+      const bool isL0RefLongTerm = slice.getRefPic(REF_PIC_LIST_0, refList0)->isLongTerm;
+      const bool isL1RefLongTerm = slice.getRefPic(REF_PIC_LIST_1, refList1)->isLongTerm;
+
+      if( isL0RefLongTerm || isL1RefLongTerm )
+      {
+        if( ( poc1 - currPoc ) * ( poc0 - currPoc ) > 0 )
+        {
+          deltaMv[1] = deltaMv[0];
+        }
+        else
+        {
+          deltaMv[1].set( -1 * deltaMv[0].hor, -1 * deltaMv[0].ver );
+        }
+      }
+      else
+      {
+        deltaMv[1] = deltaMv[0].scaleMv( scale );
+      }
+    }
   }
-  return 0;
+  else if( refList0 != -1 )
+  {
+    deltaMv[0] = dMvTable[mvdPosition];
+  }
+  else if( refList1 != -1 )
+  {
+    deltaMv[1] = dMvTable[mvdPosition];
+  }
 }
 
-unsigned DeriveCtx::CtxInterDir( const PredictionUnit& pu )
+void MergeCtx::setMmvdMergeCandiInfo( CodingUnit &cu, const MmvdIdx candIdx ) const
 {
-  return ( 7 - ((floorLog2(pu.lumaSize().width) + floorLog2(pu.lumaSize().height) + 1) >> 1) );
+  Mv tempMv[NUM_REF_PIC_LIST_01];
+
+  getMmvdDeltaMv( *cu.cs->slice, candIdx, tempMv );
+  const int mvdBaseIdx  = candIdx.pos.baseIdx;
+
+  const int refList0 = mmvdBaseMv[mvdBaseIdx][0].refIdx;
+  const int refList1 = mmvdBaseMv[mvdBaseIdx][1].refIdx;
+
+  if( refList0 != NOT_VALID && refList1 != NOT_VALID )
+  {
+    cu.interDir = 3;
+    cu.mv    [REF_PIC_LIST_0][0] = mmvdBaseMv[mvdBaseIdx][0].mv + tempMv[0];
+    cu.refIdx[REF_PIC_LIST_0]    = refList0;
+    cu.mv    [REF_PIC_LIST_1][0] = mmvdBaseMv[mvdBaseIdx][1].mv + tempMv[1];
+    cu.refIdx[REF_PIC_LIST_1]    = refList1;
+  }
+  else if( refList0 != NOT_VALID )
+  {
+    cu.interDir = 1;
+    cu.mv    [REF_PIC_LIST_0][0] = mmvdBaseMv[mvdBaseIdx][0].mv + tempMv[0];
+    cu.refIdx[REF_PIC_LIST_0]    = refList0;
+    cu.mv    [REF_PIC_LIST_1][0] = Mv(0, 0);
+    cu.refIdx[REF_PIC_LIST_1]    = -1;
+  }
+  else if( refList1 != NOT_VALID )
+  {
+    cu.interDir = 2;
+    cu.mv    [REF_PIC_LIST_0][0] = Mv(0, 0);
+    cu.refIdx[REF_PIC_LIST_0]    = -1;
+    cu.mv    [REF_PIC_LIST_1][0] = mmvdBaseMv[mvdBaseIdx][1].mv + tempMv[1];
+    cu.refIdx[REF_PIC_LIST_1]    = refList1;
+  }
+
+  cu.mmvdMergeFlag    = true;
+  cu.mmvdMergeIdx     = candIdx;
+  cu.mergeFlag        = true;
+  cu.mergeIdx         = candIdx.val;
+  cu.mergeType        = MRG_TYPE_DEFAULT_N;
+
+  cu.mvd[REF_PIC_LIST_0][0] = Mv();
+  cu.mvd[REF_PIC_LIST_1][0] = Mv();
+  cu.mvpIdx[REF_PIC_LIST_0] = NOT_VALID;
+  cu.mvpIdx[REF_PIC_LIST_1] = NOT_VALID;
+  cu.mvpNum[REF_PIC_LIST_0] = NOT_VALID;
+  cu.mvpNum[REF_PIC_LIST_1] = NOT_VALID;
+  cu.imv                    = mmvdUseAltHpelIf[mvdBaseIdx] ? IMV_HPEL : IMV_OFF;
+
+  cu.BcwIdx                 = interDirNeighbours[mvdBaseIdx] == 3 ? BcwIdx[mvdBaseIdx] : BCW_DEFAULT;
+
+  for( int refList = 0; refList < 2; refList++ )
+  {
+    if( cu.refIdx[refList] >= 0 )
+    {
+      cu.mv[refList][0].clipToStorageBitDepth();
+    }
+  }
+
+  CU::restrictBiPredMergeCandsOne( cu );
 }
 
-unsigned DeriveCtx::CtxAffineFlag( const CodingUnit& cu )
+unsigned DeriveCtx::CtxMipFlag( const CodingUnit& cu ) const
 {
-  const CodingStructure *cs = cu.cs;
   unsigned ctxId = 0;
-
-  const CodingUnit *cuLeft = cs->getCURestricted(cu.lumaPos().offset(-1, 0), cu, ChannelType::LUMA);
-  ctxId = ( cuLeft && cuLeft->affine ) ? 1 : 0;
-
-  const CodingUnit *cuAbove = cs->getCURestricted(cu.lumaPos().offset(0, -1), cu, ChannelType::LUMA);
-  ctxId += ( cuAbove && cuAbove->affine ) ? 1 : 0;
-
-  return ctxId;
-}
-
-unsigned DeriveCtx::CtxSkipFlag( const CodingUnit& cu )
-{
-  const CodingStructure *cs = cu.cs;
-  unsigned ctxId = 0;
-
-  // Get BCBP of left PU
-  const CodingUnit *cuLeft = cs->getCURestricted(cu.lumaPos().offset(-1, 0), cu, ChannelType::LUMA);
-  ctxId = ( cuLeft && cuLeft->skip ) ? 1 : 0;
-
-  // Get BCBP of above PU
-  const CodingUnit *cuAbove = cs->getCURestricted(cu.lumaPos().offset(0, -1), cu, ChannelType::LUMA);
-  ctxId += ( cuAbove && cuAbove->skip ) ? 1 : 0;
-
-  return ctxId;
-}
-
-unsigned DeriveCtx::CtxPredModeFlag( const CodingUnit& cu )
-{
-  const CodingUnit *cuLeft  = cu.cs->getCURestricted(cu.lumaPos().offset(-1, 0), cu, ChannelType::LUMA);
-  const CodingUnit *cuAbove = cu.cs->getCURestricted(cu.lumaPos().offset(0, -1), cu, ChannelType::LUMA);
-
-  unsigned ctxId = ((cuAbove && CU::isIntra(*cuAbove)) || (cuLeft && CU::isIntra(*cuLeft))) ? 1 : 0;
-
-  return ctxId;
-}
-
-unsigned DeriveCtx::CtxIBCFlag(const CodingUnit& cu)
-{
-  const CodingStructure *cs = cu.cs;
-  unsigned ctxId = 0;
-  const Position         pos    = cu.chType == ChannelType::CHROMA ? cu.chromaPos() : cu.lumaPos();
-  const CodingUnit *cuLeft = cs->getCURestricted(pos.offset(-1, 0), cu, cu.chType);
-  ctxId += (cuLeft && CU::isIBC(*cuLeft)) ? 1 : 0;
-
-  const CodingUnit *cuAbove = cs->getCURestricted(pos.offset(0, -1), cu, cu.chType);
-  ctxId += (cuAbove && CU::isIBC(*cuAbove)) ? 1 : 0;
-  return ctxId;
-}
-
-unsigned DeriveCtx::CtxMipFlag( const CodingUnit& cu )
-{
-  const CodingStructure *cs = cu.cs;
-  unsigned ctxId = 0;
-
-  const CodingUnit *cuLeft = cs->getCURestricted(cu.lumaPos().offset(-1, 0), cu, ChannelType::LUMA);
+  const CodingUnit *cuLeft = cuRestrictedLeft[CH_L];
   ctxId = (cuLeft && cuLeft->mipFlag) ? 1 : 0;
 
-  const CodingUnit *cuAbove = cs->getCURestricted(cu.lumaPos().offset(0, -1), cu, ChannelType::LUMA);
+  const CodingUnit *cuAbove = cuRestrictedAbove[CH_L];
   ctxId += (cuAbove && cuAbove->mipFlag) ? 1 : 0;
 
   ctxId  = (cu.lwidth() > 2*cu.lheight() || cu.lheight() > 2*cu.lwidth()) ? 3 : ctxId;
@@ -379,16 +417,7 @@ unsigned DeriveCtx::CtxMipFlag( const CodingUnit& cu )
   return ctxId;
 }
 
-unsigned DeriveCtx::CtxPltCopyFlag(const PLTRunMode prevRunType, const unsigned dist)
-{
-  uint8_t* ucCtxLut = (prevRunType == PLTRunMode::INDEX) ? g_paletteRunLeftLut : g_paletteRunTopLut;
-  if ( dist <= RUN_IDX_THRE )
-  {
-    return ucCtxLut[dist];
-  }
-  else
-  {
-    return ucCtxLut[RUN_IDX_THRE];
-  }
-}
+} // namespace vvenc
+
+//! \}
 

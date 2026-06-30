@@ -1,50 +1,62 @@
-/* The copyright in this software is being made available under the BSD
-* License, included below. This software may be subject to other third party
-* and contributor rights, including patent rights, and no such rights are
-* granted under this license.
-*
-* Copyright (c) 2010-2025, ITU/ISO/IEC
-* All rights reserved.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*  * Redistributions of source code must retain the above copyright notice,
-*    this list of conditions and the following disclaimer.
-*  * Redistributions in binary form must reproduce the above copyright notice,
-*    this list of conditions and the following disclaimer in the documentation
-*    and/or other materials provided with the distribution.
-*  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
-*    be used to endorse or promote products derived from this software without
-*    specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
-* BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-* THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
 
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
 /** \file     CodingStructure.h
  *  \brief    A class managing the coding information for a specific image part
  */
 
-#ifndef __CODINGSTRUCTURE__
-#define __CODINGSTRUCTURE__
+#pragma once
 
 #include "Unit.h"
-#include "Buffer.h"
 #include "CommonDef.h"
 #include "UnitPartitioner.h"
 #include "Slice.h"
-#include <vector>
 
+#include <vector>
+#include <mutex>
+
+//! \ingroup CommonLib
+//! \{
+
+namespace vvenc {
 
 struct Picture;
 
@@ -53,20 +65,13 @@ enum PictureType
 {
   PIC_RECONSTRUCTION = 0,
   PIC_ORIGINAL,
-  PIC_TRUE_ORIGINAL,
-  PIC_FILTERED_ORIGINAL,
-  PIC_FILTERED_ORIGINAL_FG,
+  PIC_ORIGINAL_RSP,
   PIC_PREDICTION,
   PIC_RESIDUAL,
-  PIC_ORG_RESI,
-  PIC_RECON_WRAP,
-  PIC_ORIGINAL_INPUT,
-  PIC_TRUE_ORIGINAL_INPUT,
-  PIC_FILTERED_ORIGINAL_INPUT,
-  PIC_YUV_POST_REC,
-  NUM_PIC_TYPES
+  PIC_SAO_TEMP,
+  NUM_PIC_TYPES,
+  PIC_ORIGINAL_RSP_REC,
 };
-extern XuPool g_xuPool;
 
 // ---------------------------------------------------------------------------
 // coding structure
@@ -77,64 +82,37 @@ class CodingStructure
 public:
 
   UnitArea         area;
+  UnitArea         _maxArea;
 
-  Picture         *picture;
-  CodingStructure *parent;
-  CodingStructure *bestCS;
-  Slice           *slice;
+  Picture*         picture;
+  CodingStructure* parent;
+  CodingStructure* lumaCS;
+  Slice*           slice;
 
-  std::array<UnitScale, MAX_NUM_COMPONENT> unitScale;
+  UnitScale        unitScale[MAX_NUM_COMP];
 
   int         baseQP;
-  EnumArray<int, ChannelType> prevQP;
-  EnumArray<int, ChannelType> currQP;
-
-  int         chromaQpAdj;
-  const SPS *sps;
-  const PPS *pps;
-  PicHeader *picHeader;
-  APS*       alfApss[ALF_CTB_MAX_NUM_APS];
-  APS *      lmcsAps;
-  APS *      scalinglistAps;
-  const VPS *vps;
+  int         prevQP[MAX_NUM_CH];
+  int         currQP[MAX_NUM_CH];
+  int         chromaQpAdj; //th this seems to belong to CUCtx rather than to cs
+  const SPS*  sps;
+  const PPS*  pps;
+  PicHeader*  picHeader;
+  APS*        alfAps[ALF_CTB_MAX_NUM_APS];
+  APS*        lmcsAps;
+  APS*        scalinglistAps;
+  const VPS*  vps;
   const PreCalcValues* pcv;
 
-  CodingStructure(XuPool &);
-
-  void create(const UnitArea &_unit, const bool isTopLayer, const bool isPLTused);
-  void create(const ChromaFormat &_chromaFormat, const Area& _area, const bool isTopLayer, const bool isPLTused);
-  void createTemporaryCsData(bool isPLTused);
-
+  CodingStructure( XUCache& unitCache, std::mutex* mutex );
+  void createPicLevel( const UnitArea& _unit, const PreCalcValues* _pcv );
+  void createForSearch( const ChromaFormat _chromaFormat, const Area& _area );
   void destroy();
   void releaseIntermediateData();
-  void destroyTemporaryCsData();
 
-#if GDR_ENABLED
-  bool containRefresh(int begX, int endX) const;
-  bool overlapRefresh() const;
-  bool overlapRefresh(int begX, int endX) const;
-  bool withinRefresh(int begX, int endX) const;
-
-  bool refreshCrossTTV(int begX, int endX) const;
-  bool refreshCrossBTV(int begX, int endX) const;
-
-  bool overlapDirty() const;
-  bool dirtyCrossTTV() const;
-  bool dirtyCrossBTV() const;
-
-  bool isClean(const ChannelType effChType) const;
-  bool isClean(const Position &intPos, RefPicList e, int refIdx) const;
-  bool isClean(const Position &intPos, const Picture* const ref_pic) const;
-  bool isClean(const Position &intPos, const Mv &fracMv) const;
-  bool isClean(const Position &intPos, const Mv &fracMv, const Picture* const refPic) const;
-  bool isClean(const Position &intPos, const Mv &fracMv, RefPicList e, int refIdx, bool isSubPu = false) const;
-  bool isClean(const Position &intPos, const ChannelType effChType) const;
-  bool isClean(const int x, const int y, const ChannelType effChType) const;
-  bool isClean(const Area &area, const ChannelType effChType) const;
-
-  bool isSubPuClean(const PredictionUnit &pu, const Mv *mv) const;
-#endif
   void rebindPicBufs();
+  void createCoeffs();
+  void destroyCoeffs();
 
   void allocateVectorsAtPicLevel();
 
@@ -142,146 +120,107 @@ public:
   // global accessors
   // ---------------------------------------------------------------------------
 
-  bool isDecomp (const Position &pos, const ChannelType _chType) const;
-  bool isDecomp (const Position &pos, const ChannelType _chType);
-  void setDecomp(const CompArea &area, const bool _isCoded = true);
-  void setDecomp(const UnitArea &area, const bool _isCoded = true);
+  const CodingUnit*    getCU(const Position& pos, const ChannelType _chType, const TreeType _treeType) const;
+  const TransformUnit* getTU(const Position& pos, const ChannelType _chType, const int subTuIdx = -1) const;
 
-  const CodingUnit     *getCU(const Position &pos, const ChannelType _chType) const;
-  const PredictionUnit *getPU(const Position &pos, const ChannelType _chType) const;
-  const TransformUnit  *getTU(const Position &pos, const ChannelType _chType, const int subTuIdx = -1) const;
+  CodingUnit*          getCU(const Position& pos, const ChannelType _chType, const TreeType _treeType);
+  CodingUnit*          getLumaCU( const Position& pos );
+  TransformUnit*       getTU(const Position& pos, const ChannelType _chType, const int subTuIdx = -1);
 
-  CodingUnit     *getCU(const Position &pos, const ChannelType _chType);
-  CodingUnit     *getLumaCU( const Position &pos );
-  PredictionUnit *getPU(const Position &pos, const ChannelType _chType);
-  TransformUnit  *getTU(const Position &pos, const ChannelType _chType, const int subTuIdx = -1);
+  const CodingUnit*    getCU(const ChannelType& _chType, const TreeType _treeType) const { return getCU(area.blocks[_chType].pos(), _chType, _treeType); }
+  const TransformUnit* getTU(const ChannelType& _chType) const { return getTU(area.blocks[_chType].pos(), _chType); }
 
-  const CodingUnit     *getCU(const ChannelType _chType) const { return getCU(area.block(_chType).pos(), _chType); }
-  const PredictionUnit *getPU(const ChannelType _chType) const { return getPU(area.block(_chType).pos(), _chType); }
-  const TransformUnit  *getTU(const ChannelType _chType) const { return getTU(area.block(_chType).pos(), _chType); }
+  CodingUnit*          getCU(const ChannelType& _chType, const TreeType _treeType ) { return getCU(area.blocks[_chType].pos(), _chType, _treeType); }
+  TransformUnit*       getTU(const ChannelType& _chType ) { return getTU(area.blocks[_chType].pos(), _chType); }
 
-  CodingUnit     *getCU(const ChannelType _chType) { return getCU(area.block(_chType).pos(), _chType); }
-  PredictionUnit *getPU(const ChannelType _chType) { return getPU(area.block(_chType).pos(), _chType); }
-  TransformUnit  *getTU(const ChannelType _chType) { return getTU(area.block(_chType).pos(), _chType); }
+  const CodingUnit*    getCURestricted(const Position& pos, const Position curPos, const unsigned curSliceIdx, const unsigned curTileIdx, const ChannelType _chType, const TreeType treeType) const;
+  const CodingUnit*    getCURestricted(const Position& pos, const CodingUnit& curCu,    const ChannelType _chType) const;
+  const TransformUnit* getTURestricted(const Position& pos, const TransformUnit& curTu, const ChannelType _chType) const;
 
-  const CodingUnit     *getCURestricted(const Position &pos, const Position curPos, const unsigned curSliceIdx, const TileIdx curTileIdx, const ChannelType _chType) const;
-  const CodingUnit     *getCURestricted(const Position &pos, const CodingUnit& curCu,                               const ChannelType _chType) const;
-  const PredictionUnit *getPURestricted(const Position &pos, const PredictionUnit& curPu,                           const ChannelType _chType) const;
-  const TransformUnit  *getTURestricted(const Position &pos, const TransformUnit& curTu,                            const ChannelType _chType) const;
-
-  CodingUnit&     addCU(const UnitArea &unit, const ChannelType _chType);
-  PredictionUnit& addPU(const UnitArea &unit, const ChannelType _chType);
-  TransformUnit&  addTU(const UnitArea &unit, const ChannelType _chType);
-  void            addEmptyTUs(Partitioner &partitioner);
+  CodingUnit&     addCU(const UnitArea& unit, const ChannelType _chType, CodingUnit* cuInit = nullptr);
+  TransformUnit&  addTU(const UnitArea& unit, const ChannelType _chType, CodingUnit* cu, TransformUnit* tuInit = nullptr);
+  void addEmptyTUs( Partitioner &partitioner, CodingUnit* cu );
 
   CUTraverser     traverseCUs(const UnitArea& _unit, const ChannelType _chType);
-  PUTraverser     traversePUs(const UnitArea& _unit, const ChannelType _chType);
   TUTraverser     traverseTUs(const UnitArea& _unit, const ChannelType _chType);
 
   cCUTraverser    traverseCUs(const UnitArea& _unit, const ChannelType _chType) const;
-  cPUTraverser    traversePUs(const UnitArea& _unit, const ChannelType _chType) const;
   cTUTraverser    traverseTUs(const UnitArea& _unit, const ChannelType _chType) const;
   // ---------------------------------------------------------------------------
   // encoding search utilities
   // ---------------------------------------------------------------------------
 
-  static_vector<double, NUM_ENC_FEATURES> features;
-
-  double     *splitRdCostBest; //[Partition::NUM_PART_SPLIT];
   double      cost;
-  bool        useDbCost;
   double      costDbOffset;
   double      lumaCost;
-  bool        useInterlayerRef;
   uint64_t    fracBits;
   Distortion  dist;
   Distortion  interHad;
-  TreeType    treeType; //because partitioner can not go deep to tu and cu coding (e.g., addCU()), need another variable for indicating treeType
-  ModeType    modeType;
-#if GREEN_METADATA_SEI_ENABLED
-  FeatureCounterStruct m_featureCounter;
-#endif
-  
-  void initStructData  (const int &QP = MAX_INT, const bool &skipMotBuf = false);
-  void initSubStructure(      CodingStructure& cs, const ChannelType chType, const UnitArea &subArea, const bool &isTuEnc);
 
-  void copyStructure   (const CodingStructure& cs, const ChannelType chType, const bool copyTUs = false, const bool copyRecoBuffer = false);
-  void useSubStructure (const CodingStructure& cs, const ChannelType chType, const UnitArea &subArea, const bool cpyPred, const bool cpyReco, const bool cpyOrgResi, const bool cpyResi, const bool updateCost);
-  void useSubStructure (const CodingStructure& cs, const ChannelType chType,                          const bool cpyPred, const bool cpyReco, const bool cpyOrgResi, const bool cpyResi, const bool updateCost) { useSubStructure(cs, chType, cs.area, cpyPred, cpyReco, cpyOrgResi, cpyResi, updateCost); }
+  void initStructData  ( const int QP = MAX_INT, const bool skipMotBuf = true, const UnitArea* area = nullptr );
+  void initSubStructure(      CodingStructure& cs, const ChannelType chType, const UnitArea& subArea, const bool isTuEnc, PelStorage* pOrgBuffer = nullptr, PelStorage* pRspBuffer = nullptr);
+  void compactResize   ( const UnitArea& area );
 
-  void clearTUs();
-  void clearPUs();
-  void clearCUs();
-  const int signalModeCons( const PartSplit split, Partitioner &partitioner, const ModeType modeTypeParent ) const;
-  void clearCuPuTuIdxMap  ( const UnitArea &_area, uint32_t numCu, uint32_t numPu, uint32_t numTu, uint32_t* pOffset );
-  void getNumCuPuTuOffset ( uint32_t* pArray )
-  {
-    pArray[0] = m_numCUs;     pArray[1] = m_numPUs;     pArray[2] = m_numTUs;
-    pArray[3] = m_offsets[0]; pArray[4] = m_offsets[1]; pArray[5] = m_offsets[2];
-  }
+  void copyStructure   (const CodingStructure& cs, const ChannelType chType, const TreeType treeType, const bool copyTUs = false, const bool copyRecoBuffer = false);
+  void useSubStructure (      CodingStructure& cs, const ChannelType chType, const TreeType treeType, const UnitArea& subArea, const bool cpyRecoToPic = true);
 
+  void clearTUs( bool force = false );
+  void clearCUs( bool force = false );
 
+  void createTempBuffers( const bool isTopLayer );
+  void destroyTempBuffers();
 private:
-  void createCoeffs(const bool isPLTused);
-  void destroyCoeffs();
-  void createInternals(const UnitArea& _unit, const bool isTopLayer, const bool isPLTused);
+  void createInternals(const UnitArea& _unit, const bool isTopLayer);
 
 public:
 
+
   std::vector<    CodingUnit*> cus;
-  std::vector<PredictionUnit*> pus;
   std::vector< TransformUnit*> tus;
 
   LutMotionCand motionLut;
+  std::vector<LutMotionCand> motionLutBuf;
+  void addMiToLut(static_vector<HPMVInfo, MAX_NUM_HMVP_CANDS>& lut, const HPMVInfo &mi);
 
-  void addMiToLut(static_vector<MotionInfo, MAX_NUM_HMVP_CANDS>& lut, const MotionInfo &mi);
-
-  PLTBuf prevPLT;
-  void resetPrevPLT(PLTBuf& prevPLT);
-  void reorderPrevPLT(PLTBuf& prevPLT, uint8_t curPLTSize[MAX_NUM_CHANNEL_TYPE], Pel curPLT[MAX_NUM_COMPONENT][MAXPLTSIZE], bool reuseflag[MAX_NUM_CHANNEL_TYPE][MAXPLTPREDSIZE], uint32_t compBegin, uint32_t numComp, bool jointPLT);
-  void setPrevPLT(PLTBuf predictor);
-  void storePrevPLT(PLTBuf& predictor);
 private:
 
   // needed for TU encoding
   bool m_isTuEnc;
 
-  EnumArray<unsigned *, ChannelType> m_cuIdx;
-  EnumArray<unsigned *, ChannelType> m_puIdx;
-  EnumArray<unsigned *, ChannelType> m_tuIdx;
-  EnumArray<bool *, ChannelType>     m_isDecomp;
+  CodingUnit**      m_cuPtr   [MAX_NUM_CH];
 
   unsigned m_numCUs;
-  unsigned m_numPUs;
   unsigned m_numTUs;
 
-  CuPool &m_cuPool;
-  PuPool &m_puPool;
-  TuPool &m_tuPool;
+  CUCache& m_cuCache;
+  TUCache& m_tuCache;
+  std::mutex* m_unitCacheMutex;
 
   std::vector<SAOBlkParam> m_sao;
 
-  PelStorage m_pred;
-  PelStorage m_resi;
-  PelStorage m_reco;
-  PelStorage m_orgr;
+  PelStorage  m_pred;
+  PelStorage  m_resi;
+  PelStorage  m_reco;
+  PelStorage  m_rspreco;
+  PelStorage* m_org;
+  PelStorage* m_rsporg;
 
-  std::vector<TCoeff> m_coeffs[MAX_NUM_COMPONENT];
-  std::vector<Pel>    m_pltIdxBuf[MAX_NUM_COMPONENT];
+  TCoeffSig*  m_coeffs [MAX_NUM_COMP];
+  int         m_offsets[MAX_NUM_COMP];
 
-  EnumArray<std::vector<PLTRunMode>, ChannelType> m_runType;
+  std::vector<Mv>   m_dmvrMvCache;
+  int               m_dmvrMvCacheOffset;
 
-  int     m_offsets[ MAX_NUM_COMPONENT ];
+  MotionInfo*       m_motionBuf;
 
-  MotionInfo *m_motionBuf;
+  LoopFilterParam*  m_lfParam[NUM_EDGE_DIR];
+
+  Size              m_mapSize[MAX_NUM_CH];
+
 
 public:
-  CodingStructure *bestParent;
-  double        tmpColorSpaceCost;
-  bool          firstColorSpaceSelected;
-  double        tmpColorSpaceIntraCost[2];
-  bool          firstColorSpaceTestOnly;
-  bool resetIBCBuffer;
+  CodingStructure*  bestParent;
+  bool              resetIBCBuffer;
 
   MotionBuf getMotionBuf( const     Area& _area );
   MotionBuf getMotionBuf( const UnitArea& _area ) { return getMotionBuf( _area.Y() ); }
@@ -294,80 +233,94 @@ public:
   MotionInfo& getMotionInfo( const Position& pos );
   const MotionInfo& getMotionInfo( const Position& pos ) const;
 
+  MotionInfo const* getMiMapPtr()    const { return m_motionBuf; }
+  MotionInfo      * getMiMapPtr()          { return m_motionBuf; }
+  ptrdiff_t         getMiMapStride() const { return ( ptrdiff_t ) g_miScaling.scaleHor( area.Y().width ); }
+
+  LFPBuf getLoopFilterParamBuf(const DeblockEdgeDir& edgeDir);
+  const CLFPBuf getLoopFilterParamBuf(const DeblockEdgeDir& edgeDir) const;
+
+  LoopFilterParam const* getLFPMapPtr   ( const DeblockEdgeDir edgeDir ) const { return m_lfParam[edgeDir]; }
+  LoopFilterParam      * getLFPMapPtr   ( const DeblockEdgeDir edgeDir )       { return m_lfParam[edgeDir]; }
+  ptrdiff_t              getLFPMapStride() const { return ( ptrdiff_t ) m_mapSize[CH_L].width; }
+
+  UnitScale getScaling(const UnitScale::ScaliningType type, const ChannelType chType = CH_L) const
+  {
+    return type == UnitScale::MI_MAP ? g_miScaling : unitScale[chType];
+  }
 
 public:
   // ---------------------------------------------------------------------------
   // temporary (shadowed) data accessors
   // ---------------------------------------------------------------------------
-         PelBuf       getPredBuf(const CompArea &blk);
-  const CPelBuf       getPredBuf(const CompArea &blk) const;
-         PelUnitBuf   getPredBuf(const UnitArea &unit);
-  const CPelUnitBuf   getPredBuf(const UnitArea &unit) const;
+         PelBuf       getPredBuf(const CompArea& blk)           { return getBuf(blk,  PIC_PREDICTION); }
+  const CPelBuf       getPredBuf(const CompArea& blk)     const { return getBuf(blk,  PIC_PREDICTION); }
+         PelUnitBuf   getPredBuf(const UnitArea& unit)          { return getBuf(unit, PIC_PREDICTION); }
+  const CPelUnitBuf   getPredBuf(const UnitArea& unit)    const { return getBuf(unit, PIC_PREDICTION); }
 
-         PelBuf       getResiBuf(const CompArea &blk);
-  const CPelBuf       getResiBuf(const CompArea &blk) const;
-         PelUnitBuf   getResiBuf(const UnitArea &unit);
-  const CPelUnitBuf   getResiBuf(const UnitArea &unit) const;
+         PelBuf       getResiBuf(const CompArea& blk)           { return getBuf(blk,  PIC_RESIDUAL); }
+  const CPelBuf       getResiBuf(const CompArea& blk)     const { return getBuf(blk,  PIC_RESIDUAL); }
+         PelUnitBuf   getResiBuf(const UnitArea& unit)          { return getBuf(unit, PIC_RESIDUAL); }
+  const CPelUnitBuf   getResiBuf(const UnitArea& unit)    const { return getBuf(unit, PIC_RESIDUAL); }
 
-         PelBuf       getRecoBuf(const CompArea &blk);
-  const CPelBuf       getRecoBuf(const CompArea &blk) const;
-         PelUnitBuf   getRecoBuf(const UnitArea &unit);
-  const CPelUnitBuf   getRecoBuf(const UnitArea &unit) const;
-         PelUnitBuf&  getRecoBufRef() { return m_reco; }
+         PelBuf       getRecoBuf(const CompArea& blk)           { return getBuf(blk,  PIC_RECONSTRUCTION); }
+  const CPelBuf       getRecoBuf(const CompArea& blk)     const { return getBuf(blk,  PIC_RECONSTRUCTION); }
+         PelUnitBuf   getRecoBuf(const UnitArea& unit)          { return getBuf(unit, PIC_RECONSTRUCTION); }
+  const CPelUnitBuf   getRecoBuf(const UnitArea& unit)    const { return getBuf(unit, PIC_RECONSTRUCTION); }
 
-         PelBuf       getOrgResiBuf(const CompArea &blk);
-  const CPelBuf       getOrgResiBuf(const CompArea &blk) const;
-         PelUnitBuf   getOrgResiBuf(const UnitArea &unit);
-  const CPelUnitBuf   getOrgResiBuf(const UnitArea &unit) const;
+         PelBuf       getOrgBuf(const CompArea& blk)            { return getBuf(blk,  PIC_ORIGINAL); }
+  const CPelBuf       getOrgBuf(const CompArea& blk)      const { return getBuf(blk,  PIC_ORIGINAL); }
+         PelUnitBuf   getOrgBuf(const UnitArea& unit)           { return getBuf(unit, PIC_ORIGINAL); }
+  const CPelUnitBuf   getOrgBuf(const UnitArea& unit)     const { return getBuf(unit, PIC_ORIGINAL); }
 
-         PelBuf       getOrgBuf(const CompArea &blk);
-  const CPelBuf       getOrgBuf(const CompArea &blk) const;
-         PelUnitBuf   getOrgBuf(const UnitArea &unit);
-  const CPelUnitBuf   getOrgBuf(const UnitArea &unit) const;
+         PelBuf       getRspOrgBuf(const CompArea& blk)         { return getBuf(blk,  PIC_ORIGINAL_RSP); }
+  const CPelBuf       getRspOrgBuf(const CompArea& blk)   const { return getBuf(blk,  PIC_ORIGINAL_RSP); }
 
-         PelBuf       getOrgBuf(const ComponentID &compID);
-  const CPelBuf       getOrgBuf(const ComponentID &compID) const;
-         PelUnitBuf   getOrgBuf();
-  const CPelUnitBuf   getOrgBuf() const;
-         PelUnitBuf   getTrueOrgBuf();
-  const CPelUnitBuf   getTrueOrgBuf() const;
+         PelBuf        getRspRecoBuf(const CompArea &blk)         { return getBuf(blk, PIC_ORIGINAL_RSP_REC); }
+  const CPelBuf        getRspRecoBuf(const CompArea &blk)   const { return getBuf(blk, PIC_ORIGINAL_RSP_REC); }
+
+         PelUnitBuf&  getRecoBufRef()                           { return m_reco; }
+         PelBuf&      getRspRecoBuf()                           { return m_rspreco.Y(); }
+  const CPelBuf       getRspRecoBuf()                     const { return m_rspreco.Y(); }
+
+         PelBuf&      getRspOrgBuf()                            { return m_rsporg->Y(); }
+  const CPelBuf       getRspOrgBuf()                      const { return m_rsporg->Y(); }
+
+         PelBuf       getOrgBuf(const ComponentID compID)       { return m_org->get(compID); }
+  const CPelBuf       getOrgBuf(const ComponentID compID) const { return m_org->get(compID); }
+         PelUnitBuf&  getOrgBuf()                               { return *m_org; }
+  const CPelUnitBuf   getOrgBuf()                         const { return *m_org; }
 
   // pred buffer
-         PelBuf       getPredBuf(const ComponentID &compID)       { return m_pred.get(compID); }
-  const CPelBuf       getPredBuf(const ComponentID &compID) const { return m_pred.get(compID); }
-         PelUnitBuf   getPredBuf()                                { return m_pred; }
-  const CPelUnitBuf   getPredBuf()                          const { return m_pred; }
+         PelBuf       getPredBuf(const ComponentID compID)      { return m_pred.get(compID); }
+  const CPelBuf       getPredBuf(const ComponentID compID)const { return m_pred.get(compID); }
+         PelUnitBuf&  getPredBuf()                              { return m_pred; }
+  const CPelUnitBuf   getPredBuf()                        const { return m_pred; }
 
   // resi buffer
-         PelBuf       getResiBuf(const ComponentID compID)        { return m_resi.get(compID); }
-  const CPelBuf       getResiBuf(const ComponentID compID)  const { return m_resi.get(compID); }
-         PelUnitBuf   getResiBuf()                                { return m_resi; }
-  const CPelUnitBuf   getResiBuf()                          const { return m_resi; }
-
-  // org-resi buffer
-         PelBuf       getOrgResiBuf(const ComponentID &compID)       { return m_orgr.get(compID); }
-  const CPelBuf       getOrgResiBuf(const ComponentID &compID) const { return m_orgr.get(compID); }
-         PelUnitBuf   getOrgResiBuf()                                { return m_orgr; }
-  const CPelUnitBuf   getOrgResiBuf()                          const { return m_orgr; }
+         PelBuf       getResiBuf(const ComponentID compID)      { return m_resi.get(compID); }
+  const CPelBuf       getResiBuf(const ComponentID compID)const { return m_resi.get(compID); }
+         PelUnitBuf&  getResiBuf()                              { return m_resi; }
+  const CPelUnitBuf   getResiBuf()                        const { return m_resi; }
 
   // reco buffer
-         PelBuf       getRecoBuf(const ComponentID compID)         { return m_reco.get(compID); }
-  const CPelBuf       getRecoBuf(const ComponentID compID)   const { return m_reco.get(compID); }
-         PelUnitBuf   getRecoBuf()                                 { return m_reco; }
-  const CPelUnitBuf   getRecoBuf()                           const { return m_reco; }
+  const CPelBuf       getRecoBuf(const ComponentID compID)const { return m_reco.get(compID); }
+         PelBuf       getRecoBuf(const ComponentID compID)      { return m_reco.get(compID); }
+         PelUnitBuf&  getRecoBuf()                              { return m_reco; }
+  const CPelUnitBuf   getRecoBuf()                        const { return m_reco; }
 
 private:
 
-  inline        PelBuf       getBuf(const CompArea &blk,  const PictureType &type);
-  inline const CPelBuf       getBuf(const CompArea &blk,  const PictureType &type) const;
-  inline        PelUnitBuf   getBuf(const UnitArea &unit, const PictureType &type);
-  inline const CPelUnitBuf   getBuf(const UnitArea &unit, const PictureType &type) const;
+         PelBuf       getBuf(const CompArea& blk,  const PictureType type);
+  const CPelBuf       getBuf(const CompArea& blk,  const PictureType type) const;
+         PelUnitBuf   getBuf(const UnitArea& unit, const PictureType type);
+  const CPelUnitBuf   getBuf(const UnitArea& unit, const PictureType type) const;
 };
 
-static inline uint32_t getNumberValidTBlocks(const PreCalcValues& pcv)
-{
-  return !isChromaEnabled(pcv.chrFormat) ? 1 : (pcv.multiBlock422 ? MAX_NUM_TBLOCKS : MAX_NUM_COMPONENT);
-}
 
-#endif
+static inline uint32_t getNumberValidTBlocks(const PreCalcValues& pcv) { return (pcv.chrFormat==CHROMA_400) ? 1 : MAX_NUM_COMP; }
+
+} // namespace vvenc
+
+//! \}
 

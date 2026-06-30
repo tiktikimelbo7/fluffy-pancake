@@ -1,245 +1,215 @@
-/* The copyright in this software is being made available under the BSD
-* License, included below. This software may be subject to other third party
-* and contributor rights, including patent rights, and no such rights are
-* granted under this license.
-*
-* Copyright (c) 2010-2025, ITU/ISO/IEC
-* All rights reserved.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*  * Redistributions of source code must retain the above copyright notice,
-*    this list of conditions and the following disclaimer.
-*  * Redistributions in binary form must reproduce the above copyright notice,
-*    this list of conditions and the following disclaimer in the documentation
-*    and/or other materials provided with the distribution.
-*  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
-*    be used to endorse or promote products derived from this software without
-*    specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
-* BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-* THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
 
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
 /** \file     UnitTool.h
  *  \brief    defines operations for basic units
  */
 
-#ifndef __UNITTOOLS__
-#define __UNITTOOLS__
+#pragma once
 
 #include "Unit.h"
 #include "UnitPartitioner.h"
 #include "ContextModelling.h"
 #include "InterPrediction.h"
 
+//! \ingroup CommonLib
+//! \{
+
+namespace vvenc {
+
 // CS tools
 namespace CS
 {
-  UnitArea getArea                    ( const CodingStructure &cs, const UnitArea &area, const ChannelType chType );
-  bool   isDualITree                  ( const CodingStructure &cs );
-  void   setRefinedMotionField(CodingStructure &cs);
-}   // namespace CS
+  UnitArea  getArea                    (const CodingStructure &cs, const UnitArea& area, const ChannelType chType, const TreeType treeType);
+  bool      isDualITree                (const CodingStructure &cs);
+  void      setRefinedMotionFieldCTU   (      CodingStructure &cs, const int ctuX, const int ctuY );
+  void      setRefinedMotionField      (      CodingStructure &cs);
+  int       signalModeCons             (const CodingStructure &cs, const UnitArea &currArea, const PartSplit split, const ModeType modeTypeParent);
+}
+
 
 // CU tools
 namespace CU
 {
-  static inline bool isIntra(const CodingUnit &cu)
-  {
-    return cu.predMode == MODE_INTRA;
-  }
+  inline bool isSepTree                 (const CodingUnit &cu)                          { return cu.treeType != TREE_D || CS::isDualITree( *cu.cs ); }
+  inline bool isLocalSepTree            (const CodingUnit &cu)                          { return cu.treeType != TREE_D && !CS::isDualITree(*cu.cs); }
+  inline bool isConsInter               (const CodingUnit &cu)                          { return cu.modeType == MODE_TYPE_INTER; }
+  inline bool isConsIntra               (const CodingUnit &cu)                          { return cu.modeType == MODE_TYPE_INTRA; }
 
-  static inline bool isInter(const CodingUnit &cu)
-  {
-    return cu.predMode == MODE_INTER;
-  }
+  inline bool isIntra                   (const CodingUnit &cu)                          { return cu.predMode == MODE_INTRA; }
+  inline bool isInter                   (const CodingUnit &cu)                          { return cu.predMode == MODE_INTER; }
+  inline bool isIBC                     (const CodingUnit &cu)                          { return cu.predMode == MODE_IBC; }
+  inline bool isPLT                     (const CodingUnit &cu)                          { return cu.predMode == MODE_PLT; }
+  inline bool isSameSlice               (const CodingUnit& cu, const CodingUnit& cu2)   { return cu.slice->independentSliceIdx == cu2.slice->independentSliceIdx; }
+  inline bool isSameTile                (const CodingUnit& cu, const CodingUnit& cu2)   { return cu.tileIdx == cu2.tileIdx; }
+  inline bool isSameSliceAndTile        (const CodingUnit& cu, const CodingUnit& cu2)   { return ( cu.slice->independentSliceIdx == cu2.slice->independentSliceIdx ) && ( cu.tileIdx == cu2.tileIdx ); }
 
-  static inline bool isIBC(const CodingUnit &cu)
-  {
-    return cu.predMode == MODE_IBC;
-  }
+  uint8_t   checkAllowedSbt             (const CodingUnit &cu);
+  bool      checkCCLMAllowed            (const CodingUnit &cu);
+  bool      isSameCtu                   (const CodingUnit &cu, const CodingUnit &cu2);
+  bool      isSameSubPic                (const CodingUnit &cu, const CodingUnit &cu2);
+  bool      isLastSubCUOfCtu            (const CodingUnit &cu);
+  uint32_t  getCtuAddr                  (const CodingUnit &cu);
+  int       predictQP                   (const CodingUnit& cu, const int prevQP);
 
-  static inline bool isPLT(const CodingUnit &cu)
-  {
-    return cu.predMode == MODE_PLT;
-  }
+  void saveMotionInHMVP                 (const CodingUnit& cu, const bool isToBeDone );
 
-  bool isSameCtu                      (const CodingUnit &cu, const CodingUnit &cu2);
-  bool isSameSlice                    (const CodingUnit &cu, const CodingUnit &cu2);
-  bool isSameTile                     (const CodingUnit &cu, const CodingUnit &cu2);
-  bool isSameSliceAndTile             (const CodingUnit &cu, const CodingUnit &cu2);
-  bool isSameSubPic                   (const CodingUnit &cu, const CodingUnit &cu2);
-  bool isLastSubCUOfCtu               (const CodingUnit &cu);
-  uint32_t getCtuAddr                     (const CodingUnit &cu);
-  int  predictQP                      (const CodingUnit& cu, const int prevQP );
+  PartSplit getSplitAtDepth             (const CodingUnit& cu, const unsigned depth);
+  ModeType  getModeTypeAtDepth          (const CodingUnit& cu, const unsigned depth);
 
-  uint32_t getNumPUs                      (const CodingUnit& cu);
-  void addPUs                         (      CodingUnit& cu);
-
-  void saveMotionForHmvp(const CodingUnit &cu);
-
-  PartSplit getSplitAtDepth           (const CodingUnit& cu, const unsigned depth);
-  ModeType  getModeTypeAtDepth        (const CodingUnit& cu, const unsigned depth);
-
-  uint32_t getNumNonZeroCoeffNonTsCorner8x8( const CodingUnit& cu, const bool lumaFlag = true, const bool chromaFlag = true );
-  bool  isPredRegDiffFromTB(const CodingUnit& cu, const ComponentID compID);
-  bool  isFirstTBInPredReg(const CodingUnit& cu, const ComponentID compID, const CompArea &area);
-  bool  isMinWidthPredEnabledForBlkSize(const int w, const int h);
-  void  adjustPredArea(CompArea &area);
-  bool  isBcwIdxCoded                 (const CodingUnit& cu);
-  uint8_t  getValidBcwIdx(const CodingUnit &cu);
-  bool bdpcmAllowed                   (const CodingUnit& cu, const ComponentID compID);
-  bool isMTSAllowed                   (const CodingUnit& cu, const ComponentID compID);
+  bool      isPredRegDiffFromTB         (const CodingUnit& cu);
+  bool      isFirstTBInPredReg          (const CodingUnit& cu, const CompArea& area);
+  void      adjustPredArea              (CompArea& area);
+  bool      isBcwIdxCoded               (const CodingUnit& cu);
+  uint8_t   getValidBcwIdx              (const CodingUnit& cu);
+  void      setBcwIdx                   (      CodingUnit& cu, uint8_t uh);
+  bool      bdpcmAllowed                (const CodingUnit& cu, const ComponentID compID);
+  bool      isMTSAllowed                (const CodingUnit& cu, const ComponentID compID);
 
 
-  bool      divideTuInRows            ( const CodingUnit &cu );
-  PartSplit getISPType                ( const CodingUnit &cu,                         const ComponentID compID );
-  bool      isISPLast                 ( const CodingUnit &cu, const CompArea &tuArea, const ComponentID compID );
-  bool      isISPFirst                ( const CodingUnit &cu, const CompArea &tuArea, const ComponentID compID );
-  bool      canUseISP                 ( const CodingUnit &cu,                         const ComponentID compID );
-  bool      canUseISP                 ( const int width, const int height, const int maxTrSize = MAX_TB_SIZEY );
-  bool      canUseLfnstWithISP(const CompArea &cuArea, ISPType ispSplitType);
-  bool      canUseLfnstWithISP        ( const CodingUnit& cu, const ChannelType chType );
-  uint32_t  getISPSplitDim            ( const int width, const int height, const PartSplit ispType );
-  bool      allLumaCBFsAreZero        ( const CodingUnit& cu );
+  bool      divideTuInRows              (const CodingUnit &cu);
+  PartSplit getISPType                  (const CodingUnit &cu,                         const ComponentID compID);
+  bool      isISPLast                   (const CodingUnit &cu, const CompArea& tuArea, const ComponentID compID);
+  bool      isISPFirst                  (const CodingUnit &cu, const CompArea& tuArea, const ComponentID compID);
+  bool      canUseISP                   (const CodingUnit &cu,                         const ComponentID compID);
+  bool      canUseISP                   (const int width, const int height, const int maxTrSize = MAX_TB_SIZEY );
+  bool      canUseLfnstWithISP          (const CompArea& cuArea, const ISPType ispSplitType );
+  bool      canUseLfnstWithISP          (const CodingUnit& cu, const ChannelType chType );
+  uint32_t  getISPSplitDim              (const int width, const int height, const PartSplit ispType);
+  bool      allLumaCBFsAreZero          (const CodingUnit& cu);
 
-  inline bool canUseIbc(const UnitArea& a) { return a.lwidth() <= IBC_MAX_CU_SIZE && a.lheight() <= IBC_MAX_CU_SIZE; }
+  TUTraverser  traverseTUs              (      CodingUnit& cu);
+  cTUTraverser traverseTUs              (const CodingUnit& cu);
 
-  PUTraverser traversePUs             (      CodingUnit& cu);
-  TUTraverser traverseTUs             (      CodingUnit& cu);
-  cPUTraverser traversePUs            (const CodingUnit& cu);
-  cTUTraverser traverseTUs            (const CodingUnit& cu);
+  bool      hasSubCUNonZeroMVd          (const CodingUnit& cu);
+  bool      hasSubCUNonZeroAffineMVd    (const CodingUnit& cu );
+  void      resetMVDandMV2Int           (      CodingUnit& cu );
 
-  bool  hasSubCUNonZeroMVd            (const CodingUnit& cu);
-  bool  hasSubCUNonZeroAffineMVd      ( const CodingUnit& cu );
+  inline uint8_t   getSbtIdx            ( const uint8_t sbtInfo )                     { return ( sbtInfo >> 0 ) & 0xf; }
+  inline uint8_t   getSbtPos            ( const uint8_t sbtInfo )                     { return ( sbtInfo >> 4 ) & 0x3; }
 
-  uint8_t getSbtInfo                  (uint8_t idx, uint8_t pos);
-  uint8_t getSbtIdx                   (const uint8_t sbtInfo);
-  uint8_t getSbtPos                   (const uint8_t sbtInfo);
-  uint8_t getSbtMode                  (const uint8_t sbtIdx, const uint8_t sbtPos);
-  uint8_t getSbtIdxFromSbtMode        (const uint8_t sbtMode);
-  uint8_t getSbtPosFromSbtMode        (const uint8_t sbtMode);
-  uint8_t targetSbtAllowed            (uint8_t idx, uint8_t sbtAllowed);
-  uint8_t numSbtModeRdo               (uint8_t sbtAllowed);
-  bool    isSbtMode                   (const uint8_t sbtInfo);
-  bool    isSameSbtSize               (const uint8_t sbtInfo1, const uint8_t sbtInfo2);
-  bool    getRprScaling(const SPS *sps, const PPS *curPPS, Picture *refPic, ScalingRatio &scalingRatio);
-  void    checkConformanceILRP        (Slice *slice);
-}
-// PU tools
-namespace PU
-{
-  int      getLMSymbolList(const PredictionUnit &pu, int *modeList);
-  int      getIntraMPMs(const PredictionUnit &pu, unsigned *mpm);
-  bool     isMIP(const PredictionUnit &pu, const ChannelType chType = ChannelType::LUMA);
-  bool     isDMChromaMIP(const PredictionUnit &pu);
-  uint32_t getIntraDirLuma(const PredictionUnit &pu);
-  void     getIntraChromaCandModes(const PredictionUnit &pu, unsigned modeList[NUM_CHROMA_MODE]);
-  uint32_t getFinalIntraMode(const PredictionUnit &pu, const ChannelType &chType);
-  uint32_t getCoLocatedIntraLumaMode(const PredictionUnit &pu);
-  int      getWideAngle(const TransformUnit &tu, const uint32_t dirMode, const ComponentID compID);
+  inline uint8_t   getSbtMode           (const uint8_t sbtIdx, const uint8_t sbtPos)  { return (sbtIdx<<1) + sbtPos - 2; }
+  inline uint8_t   getSbtIdxFromSbtMode (const uint8_t sbtMode)                       { return (sbtMode>>1)+1; }
+  inline uint8_t   getSbtPosFromSbtMode (const uint8_t sbtMode)                       { return sbtMode&1;}
+  inline uint8_t   targetSbtAllowed     (uint8_t sbtIdx, uint8_t sbtAllowed)          { return ( sbtAllowed >> sbtIdx ) & 0x1; }
 
-  const PredictionUnit &getCoLocatedLumaPU(const PredictionUnit &pu);
+  uint8_t   numSbtModeRdo               (uint8_t sbtAllowed);
+  PartSplit getSbtTuSplit               ( const uint8_t sbtInfo );
+  bool      isSbtMode                   (const uint8_t sbtInfo);
+  bool      isSameSbtSize               (const uint8_t sbtInfo1, const uint8_t sbtInfo2);
+  bool      getRprScaling               ( const SPS* sps, const PPS* curPPS, Picture* refPic, int& xScale, int& yScale );
 
-  void getInterMergeCandidates(const PredictionUnit &pu, MergeCtx &mrgCtx, int mmvdList, const int &mrgCandIdx = -1);
-  void getIBCMergeCandidates(const PredictionUnit& pu, MergeCtx& mrgCtx, const int mrgCandIdx);
-  void getInterMMVDMergeCandidates(const PredictionUnit &pu, MergeCtx &mrgCtx);
-  int getDistScaleFactor(const int &currPOC, const int &currRefPOC, const int &colPOC, const int &colRefPOC);
-  bool isDiffMER                      (const Position &pos1, const Position &pos2, const unsigned plevel);
-  bool getColocatedMVP                (const PredictionUnit &pu, const RefPicList &eRefPicList, const Position &pos, Mv& rcMv, const int &refIdx, bool sbFlag);
-  void fillMvpCand                    (      PredictionUnit &pu, const RefPicList &eRefPicList, const int &refIdx, AMVPInfo &amvpInfo );
-  void fillIBCMvpCand                 (PredictionUnit &pu, AMVPInfo &amvpInfo);
-  void fillAffineMvpCand              (      PredictionUnit &pu, const RefPicList &eRefPicList, const int &refIdx, AffineAMVPInfo &affiAMVPInfo);
-  bool addMVPCandUnscaled(const PredictionUnit &pu, const RefPicList &eRefPicList, const int &refIdx,
-                          const Position &pos, const MvpDir &eDir, AMVPInfo &amvpInfo);
-#if GDR_ENABLED
-  void xInheritedAffineMv(const PredictionUnit &pu, const PredictionUnit *puNeighbour, RefPicList eRefPicList,
-                          Mv rcMv[3], bool rcMvSolid[3], MvpType rcMvType[3], Position rcMvPos[3]);
-#endif
-  void xInheritedAffineMv             ( const PredictionUnit &pu, const PredictionUnit* puNeighbour, RefPicList eRefPicList, Mv rcMv[3] );
-  bool addMergeHmvpCand(const CodingStructure &cs, MergeCtx &mrgCtx, const int &mrgCandIdx,
-                        const uint32_t maxNumMergeCandMin1, int &cnt, const bool isAvailableA1,
-                        const MotionInfo &miLeft, const bool isAvailableB1, const MotionInfo &miAbove,
-                        const bool ibcFlag, const bool isGt4x4
-#if GDR_ENABLED
-                        ,
-                        const PredictionUnit &pu, bool &allCandSolidInAbove
-#endif
-  );
-  void addAMVPHMVPCand                (const PredictionUnit &pu, const RefPicList eRefPicList, const Picture* currRefPic, AMVPInfo &info);
-  bool addAffineMVPCandUnscaled       ( const PredictionUnit &pu, const RefPicList &refPicList, const int &refIdx, const Position &pos, const MvpDir &dir, AffineAMVPInfo &affiAmvpInfo );
-  bool isBipredRestriction            (const PredictionUnit &pu);
-  void spanMotionInfo                 (      PredictionUnit &pu, const MergeCtx &mrgCtx = MergeCtx() );
-  void spanMotionInfo                 (      PredictionUnit &pu, const MotionBuf& subPuMvpMiBuf);
-  void applyImv(PredictionUnit &pu, MergeCtx &mrgCtx, InterPrediction *interPred = nullptr);
-#if GDR_ENABLED
-  void getAffineControlPointCand(const PredictionUnit& pu, MotionInfo mi[4], bool isAvailable[4], int verIdx[4], int8_t bcwIdx, int modelIdx, int verNum, AffineMergeCtx& affMrgCtx, bool isEncodeGdrClean, bool modelSolid[6]);
-#else
-  void getAffineControlPointCand(const PredictionUnit &pu, MotionInfo mi[4], bool isAvailable[4], int verIdx[4], int8_t bcwIdx, int modelIdx, int verNum, AffineMergeCtx& affMrgCtx);
-#endif
-  void getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx, const int mrgCandIdx = -1 );
-  void setAllAffineMvField(PredictionUnit &pu, std::array<MvField[2], AFFINE_MAX_NUM_CP> &mvField, RefPicList eRefList);
-  void setAllAffineMv                 (      PredictionUnit &pu, Mv affLT, Mv affRT, Mv affLB, RefPicList eRefList, bool clipCPMVs = false );
-  bool getInterMergeSubPuMvpCand(const PredictionUnit &pu, MergeCtx &mrgCtx, const int count, int mmvdList);
-  bool getInterMergeSubPuRecurCand(const PredictionUnit &pu, MergeCtx &mrgCtx, const int count);
-  bool isSimpleSymmetricBiPred(const PredictionUnit &pu);
-  void restrictBiPredMergeCandsOne    (PredictionUnit &pu);
+  const CodingUnit* getLeft             (const CodingUnit& curr);
+  const CodingUnit* getAbove            (const CodingUnit& curr);
 
-  bool isLMCMode                      (                          unsigned mode);
-  bool isLMCModeEnabled(const PredictionUnit &pu, unsigned mode);
-  void getGeoMergeCandidates          (const PredictionUnit &pu, MergeCtx &GeoMrgCtx);
-  void spanGeoMotionInfo(PredictionUnit &pu, const MergeCtx &GeoMrgCtx, const uint8_t splitDir,
-                         const MergeIdxPair &candIdx);
-  bool addNeighborMv  (const Mv& currMv, static_vector<Mv, IBC_NUM_CANDIDATES>& neighborMvs);
-  void getIbcMVPsEncOnly(PredictionUnit &pu, static_vector<Mv, IBC_NUM_CANDIDATES>& mvPred);
-  bool getDerivedBV(PredictionUnit &pu, const Mv& currentMv, Mv& derivedMv);
-  bool checkDMVRCondition(const PredictionUnit& pu);
-  void getNeighborAffineInfo(const PredictionUnit& pu, int& numNeighborAvai, int& numNeighborAffine);
 
-  static inline bool dmvrBdofSizeCheck(const PredictionUnit &pu)
-  {
-    return pu.lheight() >= 8 && pu.lwidth() >= 8 && pu.lheight() * pu.lwidth() >= 128;
-  }
+  int      getLMSymbolList              (const CodingUnit& cu, int *modeList);
+  bool     isMIP                        (const CodingUnit& cu, const ChannelType channelType = CH_L);
+  int      getIntraMPMs                 (const CodingUnit& cu, unsigned *mpm );
+  bool     isDMChromaMIP                (const CodingUnit& cu);
+  uint32_t getIntraDirLuma              (const CodingUnit& cu);
+  void     getIntraChromaCandModes      (const CodingUnit& cu, unsigned modeList[NUM_CHROMA_MODE]);
+  const CodingUnit &getCoLocatedLumaPU  (const CodingUnit& cu);
+  uint32_t getFinalIntraMode            (const CodingUnit& cu, const ChannelType chType);
+  uint32_t getCoLocatedIntraLumaMode    (const CodingUnit& cu);
+  void     getInterMergeCandidates      (const CodingUnit& cu, MergeCtx& mrgCtx, int mmvdList, const int mrgCandIdx = -1 );
+  void     getInterMMVDMergeCandidates  (const CodingUnit& cu, MergeCtx& mrgCtx);
+  int      getDistScaleFactor           (const int currPOC, const int currRefPOC, const int colPOC, const int colRefPOC);
+  bool     isDiffMER                    (const Position &pos1, const Position &pos2, const unsigned plevel);
+  bool     getColocatedMVP              (const CodingUnit& cu, const RefPicList refPicList, const Position& pos, Mv& rcMv, const int refIdx, bool sbFlag = false);
+  void     fillMvpCand                  (      CodingUnit& cu, const RefPicList refPicList, const int refIdx, AMVPInfo &amvpInfo );
+  bool     addMVPCandUnscaled           (const CodingUnit& cu, const RefPicList refPicList, const int iRefIdx, const Position& pos, const MvpDir dir, AMVPInfo &amvpInfo);
+  bool     addMergeHMVPCand             (const CodingStructure &cs, MergeCtx& mrgCtx, const int& mrgCandIdx, const uint32_t maxNumMergeCandMin1, int &cnt, const bool isAvailableA1, const MotionInfo &miLeft, const bool isAvailableB1, const MotionInfo &miAbove, const bool ibcFlag, const bool isGt4x4);
+  void     addAMVPHMVPCand              (const CodingUnit& cu, const RefPicList refPicList, const int currRefPOC, AMVPInfo &info);
+  bool     isBipredRestriction          (const CodingUnit& cu);
+  void     spanMotionInfo               (      CodingUnit& cu, const AffineMergeCtx *mrgCtx = nullptr );
+  void     restrictBiPredMergeCandsOne  (      CodingUnit& cu);
+
+  bool     isLMCMode                    (                          unsigned mode);
+  bool     isLMCModeEnabled             (const CodingUnit& cu, unsigned mode);
+  void     getGeoMergeCandidates        (const CodingUnit& cu, MergeCtx &GeoMrgCtx);
+  void     spanGeoMotionInfo            (      CodingUnit& cu, const MergeCtx &GeoMrgCtx, const uint8_t splitDir, const uint8_t candIdx0, const uint8_t candIdx1);
+  bool     isBiPredFromDifferentDirEqDistPoc(const CodingUnit& cu);
+  bool     checkDMVRCondition           (const CodingUnit& cu);
+  void     getAffineControlPointCand    (const CodingUnit& cu, MotionInfo mi[4], bool isAvailable[4], int verIdx[4], int8_t BcwIdx, int modelIdx, int verNum, AffineMergeCtx& affMrgCtx);
+  void     getAffineMergeCand           (      CodingUnit& cu, AffineMergeCtx& affMrgCtx, const int mrgCandIdx = -1);
+  void     setAllAffineMvField          (      CodingUnit& cu, const MvField *mvField, RefPicList eRefList);
+  void     setAllAffineMv               (      CodingUnit& cu, Mv affLT, Mv affRT, Mv affLB, RefPicList eRefList, bool clipCPMVs = false);
+  void     xInheritedAffineMv           (const CodingUnit& cu, const CodingUnit* cuNeighbour, RefPicList refPicList, Mv rcMv[3]);
+  void     fillAffineMvpCand            (      CodingUnit& cu, const RefPicList refPicList, const int refIdx, AffineAMVPInfo &affiAMVPInfo);
+  bool     addAffineMVPCandUnscaled     (const CodingUnit& cu, const RefPicList refPicList, const int refIdx, const Position& pos, const MvpDir dir, AffineAMVPInfo &affiAmvpInfo);
+  bool     getInterMergeSbTMVPCand      (const CodingUnit& cu, AffineMergeCtx &mrgCtx, const int count);
+
+  void     getIBCMergeCandidates        (const CodingUnit& cu, MergeCtx& mrgCtx, const int& mrgCandIdx = -1);
+  void     fillIBCMvpCand               (CodingUnit& cu, AMVPInfo& amvpInfo);
+  void     getIbcMVPsEncOnly            (CodingUnit& cu, Mv* mvPred, int& nbPred);
+  bool     isMvInRangeFPP               (const int yB, const int nH, const int yMv, const int ifpLines, const PreCalcValues& pcv, const int yCompScale = 0, const int mvPrecShift = MV_FRACTIONAL_BITS_INTERNAL);
+  bool     isMotionBufInRangeFPP        (const CodingUnit& cu, const int ifpLines);
 }
 
 // TU tools
 namespace TU
 {
-  uint32_t getNumNonZeroCoeffsNonTSCorner8x8(const TransformUnit &tu, const bool hasLuma = true,
-                                             const bool hasChroma = true);
-  bool isNonTransformedResidualRotated(const TransformUnit &tu, const ComponentID &compID);
-  bool getCbf                         (const TransformUnit &tu, const ComponentID &compID);
-  bool getCbfAtDepth                  (const TransformUnit &tu, const ComponentID &compID, const unsigned &depth);
-  void setCbfAtDepth                  (      TransformUnit &tu, const ComponentID &compID, const unsigned &depth, const bool &cbf);
-  bool isTSAllowed                    (const TransformUnit &tu, const ComponentID  compID);
+  bool getCbf                           (const TransformUnit& tu, const ComponentID compID);
+  bool getCbfAtDepth                    (const TransformUnit& tu, const ComponentID compID, const unsigned depth);
+  void setCbfAtDepth                    (      TransformUnit& tu, const ComponentID compID, const unsigned depth, const bool cbf);
+  bool isTSAllowed                      (const TransformUnit& tu, const ComponentID compID);
 
-  bool needsSqrt2Scale                ( const TransformUnit &tu, const ComponentID &compID );
-  bool needsBlockSizeTrafoScale       ( const TransformUnit &tu, const ComponentID &compID );
-  TransformUnit* getPrevTU          ( const TransformUnit &tu, const ComponentID compID );
-  bool           getPrevTuCbfAtDepth( const TransformUnit &tu, const ComponentID compID, const int trDepth );
-  int            getICTMode         ( const TransformUnit &tu, int jointCbCr = -1 );
+  bool needsSqrt2Scale                  (const TransformUnit& tu, const ComponentID compID);
+  TransformUnit* getPrevTU              (const TransformUnit& tu, const ComponentID compID);
+  bool           getPrevTuCbfAtDepth    (const TransformUnit& tu, const ComponentID compID, const int trDepth );
+  int            getICTMode             (const TransformUnit& tu, int jointCbCr = -1);
 }
 
-uint32_t getCtuAddr(const Position &pos, const PreCalcValues &pcv);
-bool allowLfnstWithMip(const Size& block);
-#if GREEN_METADATA_SEI_ENABLED
-void writeGMFAOutput(FeatureCounterStruct& featureCounter, FeatureCounterStruct& featureCounterReference, std::string GMFAFile, bool lastFrame);
-void featureToFile(std::ofstream& featureFile,int featureCounterReference[MAX_CU_DEPTH+1][MAX_CU_DEPTH+1], std::string featureName,bool calcDifference=false,int featureCounter[MAX_CU_DEPTH+1][MAX_CU_DEPTH+1]=NULL);
-void countFeatures  (FeatureCounterStruct& featureCounterStruct, CodingStructure& cs, const UnitArea& ctuArea);
-#endif
+uint32_t  getCtuAddr                    (const Position& pos, const PreCalcValues &pcv);
+uint32_t  getCtuAddrFromCtuSize         (const Position& pos, const unsigned maxCUSizeLog2, const unsigned widthInCtus);
+
+int       getNumModesMip                (const Size& block);
+int       getMipSizeId                  (const Size& block);
+bool      allowLfnstWithMip             (const Size& block);
+
+bool      refPicCtuLineReady            (const Slice& slice, const int refCtuRow, const PreCalcValues& pcv);
+
 template<typename T, size_t N>
-uint32_t updateCandList(T mode, double uiCost, static_vector<T, N> &candModeList,
-                        static_vector<double, N> &candCostList, size_t uiFastCandNum = N, int *iserttPos = nullptr)
+uint32_t updateCandList( T uiMode, double uiCost, static_vector<T, N> &candModeList, static_vector<double, N> &candCostList, size_t uiFastCandNum = N, int *iserttPos = nullptr )
 {
   CHECK( std::min( uiFastCandNum, candModeList.size() ) != std::min( uiFastCandNum, candCostList.size() ), "Sizes do not match!" );
   CHECK( uiFastCandNum > candModeList.capacity(), "The vector is to small to hold all the candidates!" );
@@ -260,7 +230,7 @@ uint32_t updateCandList(T mode, double uiCost, static_vector<T, N> &candModeList
       candModeList[currSize - i] = candModeList[currSize - 1 - i];
       candCostList[currSize - i] = candCostList[currSize - 1 - i];
     }
-    candModeList[currSize - shift] = mode;
+    candModeList[currSize - shift] = uiMode;
     candCostList[currSize - shift] = uiCost;
     if (iserttPos != nullptr)
     {
@@ -270,7 +240,7 @@ uint32_t updateCandList(T mode, double uiCost, static_vector<T, N> &candModeList
   }
   else if( currSize < uiFastCandNum )
   {
-    candModeList.insert(candModeList.end() - shift, mode);
+    candModeList.insert( candModeList.end() - shift, uiMode );
     candCostList.insert( candCostList.end() - shift, uiCost );
     if (iserttPos != nullptr)
     {
@@ -285,4 +255,7 @@ uint32_t updateCandList(T mode, double uiCost, static_vector<T, N> &candModeList
   return 0;
 }
 
-#endif
+} // namespace vvenc
+
+//! \}
+

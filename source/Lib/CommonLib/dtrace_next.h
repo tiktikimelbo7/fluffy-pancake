@@ -1,49 +1,62 @@
-/* The copyright in this software is being made available under the BSD
- * License, included below. This software may be subject to other third party
- * and contributor rights, including patent rights, and no such rights are
- * granted under this license.
- *
- * Copyright (c) 2010-2025, ITU/ISO/IEC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
- *    be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
- * THE POSSIBILITY OF SUCH DAMAGE.
- */
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
 
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
 /** \file     dtrace_next.h
  *  \brief    DTrace support for next software
  */
 
-#ifndef _DTRACE_NEXT_H_
-#define _DTRACE_NEXT_H_
+#pragma once
 
 #include "dtrace.h"
+#include "CommonDef.h"
+#include "Rom.h"
 
-#include "CommonLib/CommonDef.h"
-#include "CommonLib/Rom.h"
+#include "Utilities/MsgLog.h"
 
 #include <cmath>
+
+//! \ingroup CommonLib
+//! \{
+
+namespace vvenc {
 
 #if ENABLE_TRACING
 
@@ -108,6 +121,7 @@
 enum DTRACE_CHANNEL
 {
   D_COMMON,
+  D_BITSTREAM,
   D_HEADER,               // header file infos
   D_NALUNITHEADER,        // NAL unit header infos
   D_RPSINFO,              // bits used to send the RPS
@@ -141,12 +155,11 @@ enum DTRACE_CHANNEL
   D_RDOQ_COST,
   D_TMP,
   D_MOT_FIELD,
+  D_MOT_COMP,             // Motion compensation
+  D_ALF,
+  D_ALF_EST,
+  D_CCALF_EST,
   D_CRC
-#if K0149_BLOCK_STATISTICS
-  ,
-  D_BLOCK_STATISTICS_ALL,
-  D_BLOCK_STATISTICS_CODED,
-#endif
 };
 #define _CNL_DEF(_s) {_s,(std::string(#_s))}
 
@@ -158,15 +171,15 @@ inline void tracing_uninit( CDTrace *pDtrace )
 
 
 template< typename Tsrc >
-void dtrace_block( CDTrace *trace_ctx, DTRACE_CHANNEL channel, Tsrc *buf, ptrdiff_t stride, unsigned block_w, unsigned block_h )
+void dtrace_block( CDTrace *trace_ctx, DTRACE_CHANNEL channel, Tsrc *buf, unsigned stride, unsigned block_w, unsigned block_h )
 {
   unsigned i, j;
   for( j = 0; j < block_h; j++ )
   {
     for( i = 0; i < block_w; i++ )
     {
-      trace_ctx->dtrace<false>( channel, "%04x ", buf[j*stride + i] );
-      //trace_ctx->dtrace<false>( channel, "%4d ", buf[j*stride + i] );
+//      trace_ctx->dtrace<false>( channel, "%04x ", buf[j*stride + i] );
+      trace_ctx->dtrace<false>( channel, "%4d ", buf[j*stride + i] );
     }
     trace_ctx->dtrace<false>( channel, "\n" );
   }
@@ -174,7 +187,7 @@ void dtrace_block( CDTrace *trace_ctx, DTRACE_CHANNEL channel, Tsrc *buf, ptrdif
 }
 
 template< typename Tsrc >
-void dtrace_frame_blockwise( CDTrace *trace_ctx, DTRACE_CHANNEL channel, Tsrc *buf, ptrdiff_t stride, unsigned frm_w, unsigned frm_h, unsigned block_w, unsigned block_h )
+void dtrace_frame_blockwise( CDTrace *trace_ctx, DTRACE_CHANNEL channel, Tsrc *buf, unsigned stride, unsigned frm_w, unsigned frm_h, unsigned block_w, unsigned block_h )
 {
   unsigned i, j, block;
   for( j = 0, block = 0; j < frm_h; j += block_h )
@@ -201,14 +214,15 @@ void dtrace_frame_blockwise( CDTrace *trace_ctx, DTRACE_CHANNEL channel, Tsrc *b
 #define DTRACE_BLOCK(...)                    dtrace_block(__VA_ARGS__)
 #define DTRACE_FRAME_BLOCKWISE(...)          dtrace_frame_blockwise(__VA_ARGS__)
 #define DTRACE_GET_COUNTER(ctx,channel)      ctx->getChannelCounter(channel)
+#define DTRACE_ENABLE_CHANNEL(cond,ctx,channel) ctx->enableChannel( channel, (cond) )
+#define DTRACE_UPDATE_LOCAL(ctx,channel,s)      ctx->updateChannel( channel, s )
 
-#include "CommonLib/Rom.h"
-
-inline CDTrace* tracing_init( std::string& sTracingFile, std::string& sTracingRule )
+inline CDTrace* tracing_init( const std::string& sTracingFile, const std::string& sTracingRule, MsgLog& msg )
 {
   dtrace_channel next_channels[] =
   {
     _CNL_DEF( D_COMMON ),
+    _CNL_DEF( D_BITSTREAM ),
     _CNL_DEF( D_HEADER ),
     _CNL_DEF( D_NALUNITHEADER ),
     _CNL_DEF( D_RPSINFO ),
@@ -242,25 +256,24 @@ inline CDTrace* tracing_init( std::string& sTracingFile, std::string& sTracingRu
     _CNL_DEF( D_RDOQ_COST ),
     _CNL_DEF( D_TMP ),
     _CNL_DEF( D_MOT_FIELD ),
+    _CNL_DEF( D_MOT_COMP ),
+    _CNL_DEF( D_ALF ),
+    _CNL_DEF( D_ALF_EST ),
+    _CNL_DEF( D_CCALF_EST ),
     _CNL_DEF( D_CRC )
-  #if K0149_BLOCK_STATISTICS
-    ,
-    _CNL_DEF( D_BLOCK_STATISTICS_ALL ),
-    _CNL_DEF( D_BLOCK_STATISTICS_CODED ),
-  #endif
   };
   dtrace_channels_t channels( next_channels, &next_channels[sizeof( next_channels ) / sizeof( next_channels[0] )] );
 
   if( !sTracingFile.empty() || !sTracingRule.empty() )
   {
-    msg( VERBOSE, "\n" );
-    msg( VERBOSE, "Tracing is enabled: %s : %s\n", sTracingFile.c_str(), sTracingRule.c_str() );
+    msg.log( VVENC_VERBOSE, "\nTracing is enabled: %s : %s\n", sTracingFile.c_str(), sTracingRule.c_str() );
   }
 
   CDTrace *pDtrace = new CDTrace( sTracingFile, sTracingRule, channels );
   if( pDtrace->getLastError() )
   {
-    msg( WARNING, "%s\n", pDtrace->getErrMessage().c_str() );
+   msg.log( VVENC_WARNING, "%s\n", pDtrace->getErrMessage().c_str() );
+    //return NULL;
   }
 
   return pDtrace;
@@ -278,8 +291,12 @@ inline CDTrace* tracing_init( std::string& sTracingFile, std::string& sTracingRu
 #define DTRACE_BLOCK(...)
 #define DTRACE_FRAME_BLOCKWISE(...)
 #define DTRACE_GET_COUNTER(ctx,channel)
+#define DTRACE_ENABLE_CHANNEL(cond,ctx,channel)
+#define DTRACE_UPDATE_LOCAL(ctx,channel,s)
 
 #endif
 
+} // namespace vvenc
 
-#endif // _DTRACE_HEVC_H_
+//! \}
+

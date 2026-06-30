@@ -1,147 +1,108 @@
-VTM reference software for VVC
-==============================
+# VVenC
 
-This software package is the reference software for Rec. ITU-T H.266 | ISO/IEC 23090-3 Versatile Video Coding (VVC). The reference software includes both encoder and decoder functionality.
+![VVenC Logo](https://github.com/fraunhoferhhi/vvenc/wiki/img/VVenC_RGB_small.png)
 
-Reference software is useful in aiding users of a video coding standard to establish and test conformance and interoperability, and to educate users and demonstrate the capabilities of the standard. For these purposes, this software is provided as an aid for the study and implementation of Versatile Video Coding.
+VVenC, the Fraunhofer Versatile Video Encoder, is a fast and efficient software H.266/VVC encoder implementation with the following main features:
+- Easy to use encoder implementation with five predefined quality/speed presets;
+- Perceptual optimization to improve subjective video quality, based on the XPSNR visual model;
+- Extensive frame-level and task-based parallelization with very good scaling;
+- Frame-level single-pass and two-pass rate control supporting variable bit-rate (VBR) encoding.
 
-The software has been jointly developed by the ITU-T Video Coding Experts Group (VCEG, Question 6 of ITU-T Study Group 16) and the ISO/IEC Moving Picture Experts Group (MPEG Joint Video Coding Team(s) with ITU-T SG 16, Working Group 5 of Subcommittee 29 of ISO/IEC Joint Technical Committee 1).
+## Information
 
-A software manual, which contains usage instructions, can be found in the "doc" subdirectory of this software package.
+See the [Wiki-Page](https://github.com/fraunhoferhhi/vvenc/wiki) for more information:
 
-The source code is stored in a Git repository. The most recent version can be retrieved using the following commands:
-```bash
-git clone https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM.git
-cd VVCSoftware_VTM
-```
+* [Build information](https://github.com/fraunhoferhhi/vvenc/wiki/Build)
+* [Usage documentation](https://github.com/fraunhoferhhi/vvenc/wiki/Usage)
+* [VVenC performance](https://github.com/fraunhoferhhi/vvenc/wiki/Encoder-Performance)
+* [License](https://github.com/fraunhoferhhi/vvenc/wiki/License)
+* [Publications](https://github.com/fraunhoferhhi/vvenc/wiki/Publications)
+* [Version history](https://github.com/fraunhoferhhi/vvenc/wiki/Changelog)
 
-Build instructions
-==================
+## Build
 
-The CMake tool is used to create platform-specific build files. 
+VVenC uses CMake to describe and manage the build process. A working [CMake](https://cmake.org/) installation is required to build the software. In the following, the basic build steps are described. Please refer to the [Wiki](https://github.com/fraunhoferhhi/vvenc/wiki/Build) for the description of all build options.
 
-Although CMake may be able to generate 32-bit binaries, **it is generally suggested to build 64-bit binaries**. 32-bit binaries are not able to access more than 2GB of RAM, which will not be sufficient for coding larger image formats. Building in 32-bit environments is not tested and will not be supported.
+### How to build using CMake?
 
-Dependencies
-------------
+To build using CMake, create a `build` directory and generate the project:
 
-For generating and verifying cryptographic signatures using digitally signed content SEI messages, OpenSSL is required in version 1.1.1 or greater. Testing is performed on OpenSSL 3.
-If OpenSSL is not found or the version is too low, only parsing of digitally signed content SEI messages will be available.
-
-Detection of OpenSSL can be disabled using the cmake option "-DENABLE_SEARCH_OPENSSL=off"
-
-Build instructions for plain CMake (suggested)
-----------------------------------------------
-
-**Note:** A working CMake installation is required for building the software.
-
-CMake generates configuration files for the compiler environment/development environment on each platform. 
-The following is a list of examples for Windows (MS Visual Studio), macOS (Xcode) and Linux (make).
-
-Open a command prompt on your system and change into the root directory of this project.
-
-Create a build directory in the root directory:
-```bash
-mkdir build 
-```
-
-Use one of the following CMake commands, based on your platform. Feel free to change the commands to satisfy
-your needs.
-
-**Windows Visual Studio 2015/17/19 64 Bit:**
-
-Use the proper generator string for generating Visual Studio files, e.g. for VS 2015:
-
-```bash
+```sh
+mkdir build
 cd build
-cmake .. -G "Visual Studio 14 2015 Win64"
+cmake .. <build options>
 ```
 
-Then open the generated solution file in MS Visual Studio.
+To actually build the project, run the following after completing project generation:
 
-For VS 2017 use "Visual Studio 15 2017 Win64", for VS 2019 use "Visual Studio 16 2019".
+```sh
+cmake --build .
+```
 
-Visual Studio 2019 also allows you to open the CMake directory directly. Choose "File->Open->CMake" for this option.
+For multi-configuration projects (e.g. Visual Studio or Xcode) specify `--config Release` to build the release configuration.
 
-**macOS Xcode:**
+### How to build using GNU Make?
 
-For generating an Xcode workspace type:
-```bash
+On top of the CMake build system, convenience Makefile is provided to simplify the build process. To build using GNU Make please run the following:
+
+```sh
+make install-release <options>
+```
+
+Other supported build targets include `configure`, `release`, `debug`, `relwithdebinfo`, `test`,  and `clean`. Refer to the Wiki for a full list of supported features.
+
+### Floating-point contraction and bit-exactness for AArch64
+
+This improves performance but may result in output mismatches between platforms or compiler versions.
+By default, VVenC allows the compiler to apply floating-point contraction (e.g. fusing multiply and add operations into fused multiply-add instructions).
+
+To guarantee fully bit-exact output across builds, VVenC must be built with floating-point contraction disabled.
+
+When configuring the build directly with CMake:
+
+```sh
+mkdir build
 cd build
-cmake .. -G "Xcode"
-```
-Then open the generated work space in Xcode.
-
-For generating Makefiles with optional non-default compilers, use the following commands:
-
-```bash
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-9 -DCMAKE_CXX_COMPILER=g++-9
-```
-In this example the brew installed GCC 9 is used for a release build.
-
-**Linux**
-
-For generating Linux Release Makefile:
-```bash
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-```
-For generating Linux Debug Makefile:
-```bash
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Debug
+cmake .. -DVVENC_FFP_CONTRACT_OFF=On <other build options>
 ```
 
-Then type
-```bash
-make -j
+When using the provided Makefile wrapper:
+```sh
+make install-release ffp-contract-off=On <other options>
 ```
 
-For more details, refer to the CMake documentation: https://cmake.org/cmake/help/latest/
+## Citing
 
-Build instructions for make
----------------------------
+Please use the following citation when referencing VVenC in literature:
 
-**Note:** The build instructions in this section require the make tool and Python to be installed, which are
-part of usual Linux and macOS environments. See below for installation instruction for Python and GnuWin32 
-on Windows.
-
-Open a command prompt on your system and change into the root directory of this project.
-
-To use the default system compiler simply call:
-```bash
-make all
+```bibtex
+@InProceedings{VVenC,
+  author    = {Wieckowski, Adam and Brandenburg, Jens and Hinz, Tobias and Bartnik, Christian and George, Valeri and Hege, Gabriel and Helmrich, Christian and Henkel, Anastasia and Lehmann, Christian and Stoffers, Christian and Zupancic, Ivan and Bross, Benjamin and Marpe, Detlev},
+  booktitle = {Proc. IEEE International Conference on Multimedia Expo Workshops (ICMEW)},
+  date      = {2021},
+  title     = {VVenC: An Open And Optimized VVC Encoder Implementation},
+  doi       = {10.1109/ICMEW53276.2021.9455944},
+  pages     = {1-2},
+}
 ```
 
+## Contributing
 
-**MSYS2 and MinGW (Windows)**
+Feel free to contribute. To do so:
 
-**Note:** Build files for MSYS MinGW were added on request. The build platform is not regularily tested and can't be supported. 
+* Fork the current-most state of the master branch
+* Apply the desired changes
+* For non-trivial contributions, add your name to [AUTHORS.md](./AUTHORS.md)
+* Create a pull-request to the upstream repository
 
-Open an MSYS MinGW 64-Bit terminal and change into the root directory of this project.
+## License
 
-Call:
-```bash
-make all toolset=gcc
-```
+Please see [LICENSE.txt](./LICENSE.txt) file for the terms of use of the contents of this repository.
 
-The following tools need to be installed for MSYS2 and MinGW:
+For more information, please contact: vvc@hhi.fraunhofer.de
 
-Download CMake: http://www.cmake.org/ and install it.
+**Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.**
 
-Python and GnuWin32 are not mandatory, but they simplify the build process for the user.
+**All rights reserved.**
 
-python:    https://www.python.org/downloads/release/python-371/
-
-gnuwin32:  https://sourceforge.net/projects/getgnuwin32/files/getgnuwin32/0.6.30/GetGnuWin32-0.6.3.exe/download
-
-To use MinGW, install MSYS2: http://repo.msys2.org/distrib/msys2-x86_64-latest.exe
-
-Installation instructions: https://www.msys2.org/
-
-Install the needed toolchains:
-```bash
-pacman -S --needed base-devel mingw-w64-i686-toolchain mingw-w64-x86_64-toolchain git subversion mingw-w64-i686-cmake mingw-w64-x86_64-cmake
-```
-
+**VVenC® is a registered trademark of the Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V.**

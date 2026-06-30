@@ -1,35 +1,45 @@
-/* The copyright in this software is being made available under the BSD
- * License, included below. This software may be subject to other third party
- * and contributor rights, including patent rights, and no such rights are
- * granted under this license.
- *
- * Copyright (c) 2010-2025, ITU/ISO/IEC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
- *    be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
- * THE POSSIBILITY OF SUCH DAMAGE.
- */
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
+
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
+
 
 /** \file     Contexts.cpp
  *  \brief    Classes providing probability descriptions and contexts (also contains context initialization values)
@@ -39,8 +49,11 @@
 
 #include <algorithm>
 #include <cstring>
-#include <limits>
 
+//! \ingroup CommonLib
+//! \{
+
+namespace vvenc {
 
 const uint8_t ProbModelTables::m_RenormTable_32[32] =
 {
@@ -120,7 +133,7 @@ const BinFracBits ProbModelTables::m_binFracBits[256] = {
   { { 0x28beb, 0x0057e } }, { { 0x2a658, 0x004c0 } }, { { 0x2c531, 0x00403 } }, { { 0x2ea40, 0x00346 } },
   { { 0x318a9, 0x0028b } }, { { 0x356cb, 0x001d0 } }, { { 0x3b520, 0x00116 } }, { { 0x48000, 0x0005c } },
 };
-void BinProbModel_Std::init( int qp, int initId )
+void BinProbModel::init( int qp, int initId )
 {
   int slope = (initId >> 3) - 4;
   int offset = ((initId & 7) * 18) + 1;
@@ -130,6 +143,9 @@ void BinProbModel_Std::init( int qp, int initId )
   m_state[0]   = p1 & MASK_0;
   m_state[1]   = p1 & MASK_1;
 }
+
+
+
 
 CtxSet::CtxSet( std::initializer_list<CtxSet> ctxSets )
 {
@@ -144,12 +160,17 @@ CtxSet::CtxSet( std::initializer_list<CtxSet> ctxSets )
   Size    = maxOffset - minOffset;
 }
 
+
+
+
+
 const std::vector<uint8_t>& ContextSetCfg::getInitTable( unsigned initId )
 {
   CHECK( initId >= (unsigned)sm_InitTables.size(),
          "Invalid initId (" << initId << "), only " << sm_InitTables.size() << " tables defined." );
   return sm_InitTables[initId];
 }
+
 
 CtxSet ContextSetCfg::addCtxSet( std::initializer_list<std::initializer_list<uint8_t>> initSet2d )
 {
@@ -174,7 +195,7 @@ CtxSet ContextSetCfg::addCtxSet( std::initializer_list<std::initializer_list<uin
 
 
 #define CNU 35
-std::vector<std::vector<uint8_t>> ContextSetCfg::sm_InitTables(NUMBER_OF_SLICE_TYPES + 1);
+std::vector<std::vector<uint8_t>> ContextSetCfg::sm_InitTables(VVENC_NUMBER_OF_SLICE_TYPES + 1);
 
 // clang-format off
 const CtxSet ContextSetCfg::SplitFlag = ContextSetCfg::addCtxSet
@@ -273,20 +294,38 @@ const CtxSet ContextSetCfg::MmvdStepMvpIdx = ContextSetCfg::addCtxSet
   {   0, },
 });
 
+const CtxSet ContextSetCfg::SubblockMergeFlag = ContextSetCfg::addCtxSet
+({
+  {  25,  58,  45, },
+  {  48,  57,  44, },
+  { CNU, CNU, CNU, },
+  {   4,   4,   4, },
+});
+
+const CtxSet ContextSetCfg::AffMergeIdx = ContextSetCfg::addCtxSet
+({
+  {   4, },
+  {   5, },
+  { CNU, },
+  {   0, },
+});
+
+const CtxSet ContextSetCfg::CiipFlag = ContextSetCfg::addCtxSet
+({
+  {  57, },
+  {  57, },
+  { CNU, },
+  {   1, },
+});
+
+
+
 const CtxSet ContextSetCfg::PredMode = ContextSetCfg::addCtxSet
 ({
   {  40,  35, },
   {  40,  35, },
   { CNU, CNU, },
   {   5,   1, },
-});
-
-const CtxSet ContextSetCfg::MultiRefLineIdx = ContextSetCfg::addCtxSet
-({
-  {  25,  59, },
-  {  25,  58, },
-  {  25,  60, },
-  {   5,   8, },
 });
 
 const CtxSet ContextSetCfg::IntraLumaMpmFlag = ContextSetCfg::addCtxSet
@@ -303,6 +342,31 @@ const CtxSet ContextSetCfg::IntraLumaPlanarFlag = ContextSetCfg::addCtxSet
   {  12,  20, },
   {  13,  28, },
   {   1,   5, },
+});
+
+
+const CtxSet ContextSetCfg::MultiRefLineIdx = ContextSetCfg::addCtxSet
+({
+  {  25,  59, },
+  {  25,  58, },
+  {  25,  60, },
+  {   5,   8, },
+});
+
+const CtxSet ContextSetCfg::MipFlag = ContextSetCfg::addCtxSet
+({
+  {  56,  57,  50,  26, },
+  {  41,  57,  58,  26, },
+  {  33,  49,  50,  25, },
+  {   9,  10,   9,   6, },
+});
+
+const CtxSet ContextSetCfg::ISPMode = ContextSetCfg::addCtxSet
+({
+  {  33,  43, },
+  {  33,  36, },
+  {  33,  43, },
+  {   9,   2, },
 });
 
 const CtxSet ContextSetCfg::CclmModeFlag = ContextSetCfg::addCtxSet
@@ -329,14 +393,6 @@ const CtxSet ContextSetCfg::IntraChromaPredMode = ContextSetCfg::addCtxSet
   {   5, },
 });
 
-const CtxSet ContextSetCfg::MipFlag = ContextSetCfg::addCtxSet
-({
-  {  56,  57,  50,  26, },
-  {  41,  57,  58,  26, },
-  {  33,  49,  50,  25, },
-  {   9,  10,   9,   6, },
-});
-
 const CtxSet ContextSetCfg::DeltaQP = ContextSetCfg::addCtxSet
 ({
   { CNU, CNU, },
@@ -361,14 +417,6 @@ const CtxSet ContextSetCfg::RefPic = ContextSetCfg::addCtxSet
   {   0,   4, },
 });
 
-const CtxSet ContextSetCfg::SubblockMergeFlag = ContextSetCfg::addCtxSet
-({
-  {  25,  58,  45, },
-  {  48,  57,  44, },
-  { CNU, CNU, CNU, },
-  {   4,   4,   4, },
-});
-
 const CtxSet ContextSetCfg::AffineFlag = ContextSetCfg::addCtxSet
 ({
   {  19,  13,   6, },
@@ -385,15 +433,7 @@ const CtxSet ContextSetCfg::AffineType = ContextSetCfg::addCtxSet
   {   4, },
 });
 
-const CtxSet ContextSetCfg::AffMergeIdx = ContextSetCfg::addCtxSet
-({
-  {   4, },
-  {   5, },
-  { CNU, },
-  {   0, },
-});
-
-const CtxSet ContextSetCfg::bcwIdx = ContextSetCfg::addCtxSet
+const CtxSet ContextSetCfg::BcwIdx = ContextSetCfg::addCtxSet
 ({
   {   5, },
   {   4, },
@@ -427,10 +467,10 @@ const CtxSet ContextSetCfg::QtRootCbf = ContextSetCfg::addCtxSet
 
 const CtxSet ContextSetCfg::ACTFlag = ContextSetCfg::addCtxSet
 ({
-  {  46, },
-  {  46, },
-  {  52, },
-  {   1, },
+  { CNU, },
+  { CNU, },
+  { CNU, },
+  { DWS, },
 });
 
 const CtxSet ContextSetCfg::QtCbf[] =
@@ -656,37 +696,6 @@ const CtxSet ContextSetCfg::PLTFlag = ContextSetCfg::addCtxSet
   {   1, },
 });
 
-const CtxSet ContextSetCfg::RotationFlag = ContextSetCfg::addCtxSet
-({
-  {  35, },
-  {  42, },
-  {  42, },
-  {   5, },
-});
-
-const CtxSet ContextSetCfg::RunTypeFlag = ContextSetCfg::addCtxSet
-({
-  {  50, },
-  {  59, },
-  {  42, },
-  {   9, },
-});
-
-const CtxSet ContextSetCfg::IdxRunModel = ContextSetCfg::addCtxSet
-({
-  {  58,  45,  45,  30,  38, },
-  {  51,  30,  30,  38,  23, },
-  {  50,  37,  45,  30,  46, },
-  {   9,   6,   9,  10,   5, },
-});
-
-const CtxSet ContextSetCfg::CopyRunModel = ContextSetCfg::addCtxSet
-({
-  {  45,  38,  46, },
-  {  38,  53,  46, },
-  {  45,  38,  46, },
-  {   0,   9,   5, },
-});
 
 const CtxSet ContextSetCfg::TransformSkipFlag = ContextSetCfg::addCtxSet
 ({
@@ -704,13 +713,6 @@ const CtxSet ContextSetCfg::MTSIdx = ContextSetCfg::addCtxSet
   {   8,   0,   9,   0, },
 });
 
-const CtxSet ContextSetCfg::ISPMode = ContextSetCfg::addCtxSet
-({
-  {  33,  43, },
-  {  33,  36, },
-  {  33,  43, },
-  {   9,   2, },
-});
 
 const CtxSet ContextSetCfg::SbtFlag = ContextSetCfg::addCtxSet
 ({
@@ -768,7 +770,7 @@ const CtxSet ContextSetCfg::ImvFlag = ContextSetCfg::addCtxSet
   {   0,   5,   0,   0,   4, },
 });
 
-const CtxSet ContextSetCfg::alfCtbFlag = ContextSetCfg::addCtxSet
+const CtxSet ContextSetCfg::ctbAlfFlag = ContextSetCfg::addCtxSet
 ({
   {  33,  52,  46,  25,  61,  54,  25,  61,  54, },
   {  13,  23,  46,   4,  61,  54,  19,  46,  54, },
@@ -784,7 +786,7 @@ const CtxSet ContextSetCfg::ctbAlfAlternative = ContextSetCfg::addCtxSet
   {   0,   0, },
 });
 
-const CtxSet ContextSetCfg::alfUseApsFlag = ContextSetCfg::addCtxSet
+const CtxSet ContextSetCfg::AlfUseTemporalFilt = ContextSetCfg::addCtxSet
 ({
   {  46, },
   {  46, },
@@ -798,14 +800,6 @@ const CtxSet ContextSetCfg::CcAlfFilterControlFlag = ContextSetCfg::addCtxSet
   {  18,  21,  38,  18,  21,  38, },
   {  18,  30,  31,  18,  30,  31, },
   {   4,   1,   4,   4,   1,   4, },
-});
-
-const CtxSet ContextSetCfg::CiipFlag = ContextSetCfg::addCtxSet
-({
-  {  57, },
-  {  57, },
-  { CNU, },
-  {   1, },
 });
 
 const CtxSet ContextSetCfg::IBCFlag = ContextSetCfg::addCtxSet
@@ -877,87 +871,84 @@ const unsigned ContextSetCfg::NumberOfContexts = (unsigned)ContextSetCfg::sm_Ini
 
 
 // combined sets
-const CtxSet ContextSetCfg::Palette = { ContextSetCfg::RotationFlag, ContextSetCfg::RunTypeFlag, ContextSetCfg::IdxRunModel, ContextSetCfg::CopyRunModel };
 const CtxSet ContextSetCfg::Sao = { ContextSetCfg::SaoMergeFlag, ContextSetCfg::SaoTypeIdx };
 
-const CtxSet ContextSetCfg::Alf = { ContextSetCfg::alfCtbFlag, ContextSetCfg::ctbAlfAlternative,
-                                    ContextSetCfg::alfUseApsFlag };
+const CtxSet ContextSetCfg::Alf = { ContextSetCfg::ctbAlfFlag, ContextSetCfg::ctbAlfAlternative, ContextSetCfg::AlfUseTemporalFilt };
 
-const CtxSet ContextSetCfg::ctxPartition = { ContextSetCfg::SplitFlag, ContextSetCfg::SplitQtFlag,
-                                             ContextSetCfg::SplitHvFlag, ContextSetCfg::Split12Flag,
-                                             ContextSetCfg::ModeConsFlag };
-
-template<class BinProbModel> CtxStore<BinProbModel>::CtxStore() : m_ctxBuffer(), m_ctx(nullptr) {}
-
-template<class BinProbModel>
-CtxStore<BinProbModel>::CtxStore(bool dummy) : m_ctxBuffer(ContextSetCfg::NumberOfContexts), m_ctx(m_ctxBuffer.data())
+CtxStore::CtxStore()
+  : m_CtxBuffer ()
+  , m_Ctx       ( nullptr )
 {}
 
-template<class BinProbModel>
-CtxStore<BinProbModel>::CtxStore(const CtxStore<BinProbModel> &ctxStore)
-  : m_ctxBuffer(ctxStore.m_ctxBuffer), m_ctx(m_ctxBuffer.data())
+CtxStore::CtxStore( bool dummy )
+  : m_CtxBuffer ( ContextSetCfg::NumberOfContexts )
+  , m_Ctx       ( m_CtxBuffer.data() )
 {}
 
-template <class BinProbModel>
-void CtxStore<BinProbModel>::init( int qp, int initId )
+CtxStore::CtxStore( const CtxStore& ctxStore )
+  : m_CtxBuffer ( ctxStore.m_CtxBuffer )
+  , m_Ctx       ( m_CtxBuffer.data() )
+{}
+
+void CtxStore::init( int qp, int initId )
 {
   const std::vector<uint8_t>& initTable = ContextSetCfg::getInitTable( initId );
-  CHECK(m_ctxBuffer.size() != initTable.size(), "Size of init table (" << initTable.size()
-                                                                       << ") does not match size of context buffer ("
-                                                                       << m_ctxBuffer.size() << ").");
-  const std::vector<uint8_t> &rateInitTable = ContextSetCfg::getInitTable(NUMBER_OF_SLICE_TYPES);
-  CHECK(m_ctxBuffer.size() != rateInitTable.size(),
+  CHECK( m_CtxBuffer.size() != initTable.size(),
+        "Size of init table (" << initTable.size() << ") does not match size of context buffer (" << m_CtxBuffer.size() << ")." );
+  const std::vector<uint8_t> &rateInitTable = ContextSetCfg::getInitTable(VVENC_NUMBER_OF_SLICE_TYPES);
+  CHECK(m_CtxBuffer.size() != rateInitTable.size(),
         "Size of rate init table (" << rateInitTable.size() << ") does not match size of context buffer ("
-                                    << m_ctxBuffer.size() << ").");
+                                    << m_CtxBuffer.size() << ").");
   int clippedQP = Clip3( 0, MAX_QP, qp );
-  for (std::size_t k = 0; k < m_ctxBuffer.size(); k++)
+  for( std::size_t k = 0; k < m_CtxBuffer.size(); k++ )
   {
-    m_ctxBuffer[k].init(clippedQP, initTable[k]);
-    m_ctxBuffer[k].setLog2WindowSize(rateInitTable[k]);
+    m_CtxBuffer[k].init( clippedQP, initTable[k] );
+    m_CtxBuffer[k].setLog2WindowSize(rateInitTable[k]);
   }
 }
 
-template <class BinProbModel>
-void CtxStore<BinProbModel>::setWinSizes( const std::vector<uint8_t>& log2WindowSizes )
+void CtxStore::setWinSizes( const std::vector<uint8_t>& log2WindowSizes )
 {
-  CHECK(m_ctxBuffer.size() != log2WindowSizes.size(),
-        "Size of window size table (" << log2WindowSizes.size() << ") does not match size of context buffer ("
-                                      << m_ctxBuffer.size() << ").");
-  for (std::size_t k = 0; k < m_ctxBuffer.size(); k++)
+  CHECK( m_CtxBuffer.size() != log2WindowSizes.size(),
+        "Size of window size table (" << log2WindowSizes.size() << ") does not match size of context buffer (" << m_CtxBuffer.size() << ")." );
+  for( std::size_t k = 0; k < m_CtxBuffer.size(); k++ )
   {
-    m_ctxBuffer[k].setLog2WindowSize(log2WindowSizes[k]);
+    m_CtxBuffer[k].setLog2WindowSize( log2WindowSizes[k] );
   }
 }
 
-template <class BinProbModel>
-void CtxStore<BinProbModel>::loadPStates( const std::vector<uint16_t>& probStates )
+void CtxStore::loadPStates( const std::vector<uint16_t>& probStates )
 {
-  CHECK(m_ctxBuffer.size() != probStates.size(), "Size of prob states table ("
-                                                   << probStates.size() << ") does not match size of context buffer ("
-                                                   << m_ctxBuffer.size() << ").");
-  for (std::size_t k = 0; k < m_ctxBuffer.size(); k++)
+  CHECK( m_CtxBuffer.size() != probStates.size(),
+        "Size of prob states table (" << probStates.size() << ") does not match size of context buffer (" << m_CtxBuffer.size() << ")." );
+  for( std::size_t k = 0; k < m_CtxBuffer.size(); k++ )
   {
-    m_ctxBuffer[k].setState(probStates[k]);
+    m_CtxBuffer[k].setState( probStates[k] );
   }
 }
 
-template <class BinProbModel>
-void CtxStore<BinProbModel>::savePStates( std::vector<uint16_t>& probStates ) const
+void CtxStore::savePStates( std::vector<uint16_t>& probStates ) const
 {
-  probStates.resize(m_ctxBuffer.size(), uint16_t(0));
-  for (std::size_t k = 0; k < m_ctxBuffer.size(); k++)
+  probStates.resize( m_CtxBuffer.size(), uint16_t(0) );
+  for( std::size_t k = 0; k < m_CtxBuffer.size(); k++ )
   {
-    probStates[k] = m_ctxBuffer[k].getState();
+    probStates[k] = m_CtxBuffer[k].getState();
   }
 }
 
-template class CtxStore<BinProbModel_Std>;
 
-Ctx::Ctx() : m_bpmType(BpmType::NONE) {}
-Ctx::Ctx(const BinProbModel_Std *dummy) : m_bpmType(BpmType::STD), m_CtxStore_Std(true) {}
 
-Ctx::Ctx(const Ctx &ctx) : m_bpmType(ctx.m_bpmType), m_CtxStore_Std(ctx.m_CtxStore_Std)
+
+
+Ctx::Ctx()                                                      {}
+Ctx::Ctx( const BinProbModel*   dummy ) : m_CtxStore  ( true )  {}
+
+Ctx::Ctx( const Ctx& ctx )
+  : m_CtxStore    ( ctx.m_CtxStore    )
 {
-  ::memcpy( m_GRAdaptStats, ctx.m_GRAdaptStats, sizeof( unsigned ) * RExt__GOLOMB_RICE_ADAPTATION_STATISTICS_SETS );
 }
+
+} // namespace vvenc
+
+//! \}
 

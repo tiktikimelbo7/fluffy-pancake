@@ -1,39 +1,45 @@
-/* The copyright in this software is being made available under the BSD
- * License, included below. This software may be subject to other third party
- * and contributor rights, including patent rights, and no such rights are
- * granted under this license.
- *
- * Copyright (c) 2010-2025, ITU/ISO/IEC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
- *    be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
- * THE POSSIBILITY OF SUCH DAMAGE.
- */
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or
+other Intellectual Property Rights other than the copyrights concerning
+the Software are granted under this license.
 
-/** \file     SEIFilmGrainAnalyzer.h
-    \brief    SMPTE RDD5 based film grain analysis functionality from SEI messages
-*/
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur F�rderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
+
 
 #ifndef __SEIFILMGRAINANALYZER__
 #define __SEIFILMGRAINANALYZER__
@@ -42,51 +48,37 @@
 
 #include "CommonLib/Picture.h"
 #include "CommonLib/SEI.h"
-#include "Utilities/VideoIOYuv.h"
-#include "CommonLib/CommonDef.h"
 
 #include <numeric>
 #include <cmath>
 #include <algorithm>
+#include <fstream>  // Include this for std::ofstream
 
+//using namespace vvenc;
+namespace vvenc {
 
-static constexpr double   PI                            =     3.14159265358979323846;
+#if defined(TARGET_SIMD_X86)  && ENABLE_SIMD_OPT_FGA
+using namespace x86_simd;
+#endif
+  
+static constexpr double   PI                     = 3.14159265358979323846;
+static constexpr double   PI_2                   = 3.14159265358979323846 / 2.0;
+static constexpr double   pi_8                   = PI / 8.0;
+static constexpr double   pi_3_8                 = 3.0 * PI / 8.0;
+static constexpr double   pi_5_8                 = 5.0 * PI / 8.0;
+static constexpr double   pi_7_8                 = 7.0 * PI / 8.0;
 
-// POLYFIT
-static constexpr int      MAXPAIRS                                  = 256;
-static constexpr int      MAXORDER                                  = 8;     // maximum order of polinomial fitting
-static constexpr int      MAX_REAL_SCALE                            = 16;
-static constexpr int      ORDER                                     = 4;     // order of polinomial function
-static constexpr int      QUANT_LEVELS                              = 4;     // number of quantization levels in lloyd max quantization
-static constexpr int      INTERVAL_SIZE                             = 16;
-static constexpr int      MIN_ELEMENT_NUMBER_PER_INTENSITY_INTERVAL = 8;
-static constexpr int      MIN_POINTS_FOR_INTENSITY_ESTIMATION       = 40;    // 5*8 = 40; 5 intervals with at least 8 points
-static constexpr int      MIN_BLOCKS_FOR_CUTOFF_ESTIMATION          = 2;     // 2 blocks of n x n size
-static constexpr int      POINT_STEP                                = 16;    // step size in point extension
-static constexpr int      MAX_NUM_POINT_TO_EXTEND                   = 4;     // max point in extension
-static constexpr double   POINT_SCALE                               = 1.25;  // scaling in point extension
-static constexpr double   VAR_SCALE_DOWN                            = 1.2;   // filter out large points
-static constexpr double   VAR_SCALE_UP                              = 0.6;   // filter out large points
-static constexpr int      NUM_PASSES                                = 2;     // number of passes when fitting the function
-static constexpr int      NBRS                                      = 1;     // minimum number of surrounding points in order to keep it for further analysis (within the widnow range)
-static constexpr int      WINDOW                                    = 1;     // window to check surrounding points
-static constexpr int      MIN_INTENSITY                             = 40;
-static constexpr int      MAX_INTENSITY                             = 950;
+static constexpr int      DATA_BASE_SIZE         = 64;
+static constexpr int      INTERVAL_SIZE          = 16;
+static constexpr int      MAX_INTERVAL_NUMBER    = (1 << 16) / INTERVAL_SIZE;
+static constexpr int      MAXPAIRS               = 256;
 
-//! \ingroup SEIFilmGrainAnalyzer
-//! \{
-
+static constexpr int      KERNELSIZE             = 3;     // Dilation and erosion kernel size
+static constexpr int      CONV_WIDTH_S           = 3;
+static constexpr int      CONV_HEIGHT_S          = 3;
 // ====================================================================================================================
 // Class definition
 // ====================================================================================================================
-
-struct Picture;
-
-typedef std::vector<std::vector<Intermediate_Int>> PelMatrix;
-typedef std::vector<std::vector<double>>           PelMatrixDouble;
-
-typedef std::vector<std::vector<long double>>      PelMatrixLongDouble;
-typedef std::vector<long double>                   PelVectorLongDouble;
 
 class Canny
 {
@@ -95,29 +87,61 @@ public:
   ~Canny();
 
   unsigned int      m_convWidthG = 5, m_convHeightG = 5;		  // Pixel's row and col positions for Gauss filtering
+  
+  void init ( unsigned int width,
+              unsigned int height,
+              ChromaFormat inputChroma );
 
-  void detect_edges(const PelStorage* orig, PelStorage* dest, unsigned int uiBitDepth, ComponentID compID);
+  void destroy ();
+
+  void detect_edges ( const PelStorage* orig,
+                      PelStorage* dest,
+                      unsigned int uiBitDepth,
+                      ComponentID compID );
 
 private:
-  static const int  m_gx[3][3];                               // Sobel kernel x
-  static const int  m_gy[3][3];                               // Sobel kernel y
-  static const int  m_gauss5x5[5][5];                         // Gauss 5x5 kernel, integer approximation
-
-  unsigned int      m_convWidthS = 3, m_convHeightS = 3;		  // Pixel's row and col positions for Sobel filtering
-
   double            m_lowThresholdRatio   = 0.1;               // low threshold rato
   int               m_highThresholdRatio  = 3;                 // high threshold rato
 
-  void gradient   ( PelStorage* buff1, PelStorage* buff2,
-                    unsigned int width, unsigned int height,
-                    unsigned int convWidthS, unsigned int convHeightS, unsigned int bitDepth, ComponentID compID );
-  void suppressNonMax ( PelStorage* buff1, PelStorage* buff2, unsigned int width, unsigned int height, ComponentID compID );
-  void doubleThreshold( PelStorage *buff, unsigned int width, unsigned int height, /*unsigned int windowSizeRatio,*/
-                       unsigned int bitDepth, ComponentID compID);
-  void edgeTracking   ( PelStorage* buff1, unsigned int width, unsigned int height,
-                       unsigned int windowWidth, unsigned int windowHeight, unsigned int bitDepth, ComponentID compID );
-};
+  PelStorage *m_orientationBuf = nullptr;
+  PelStorage* m_gradientBufX = nullptr;
+  PelStorage* m_gradientBufY = nullptr;
 
+  void suppressNonMax ( PelStorage* buff1,
+                        PelStorage* buff2,
+                        unsigned int width,
+                        unsigned int height,
+                        ComponentID compID );
+
+  void doubleThreshold ( PelStorage *buff,
+                         unsigned int width,
+                         unsigned int height,
+                         unsigned int bitDepth,
+                         ComponentID compID );
+
+  void edgeTracking ( PelStorage* buff1,
+                      unsigned int width,
+                      unsigned int height,
+                      unsigned int windowWidth,
+                      unsigned int windowHeight,
+                      unsigned int bitDepth,
+                      ComponentID compID );
+
+  void (*gradient) ( PelStorage* buff1,
+                     PelStorage* buff2,
+                     PelStorage *tmpBuf1,
+                     PelStorage *tmpBuf2,
+                     unsigned int width,
+                     unsigned int height,
+                     unsigned int bitDepth,
+                     ComponentID compID);
+
+#if ENABLE_SIMD_OPT_FGA && defined( TARGET_SIMD_X86 )
+  void initFGACannyX86();
+  template <X86_VEXT vext>
+  void _initFGACannyX86();
+#endif
+};
 
 class Morph
 {
@@ -125,104 +149,196 @@ public:
   Morph();
   ~Morph();
 
-  int dilation  (PelStorage* buff, unsigned int bitDepth, ComponentID compID, int numIter, int iter = 0);
-  int erosion   (PelStorage* buff, unsigned int bitDepth, ComponentID compID, int numIter, int iter = 0);
+  void init ( uint32_t width,
+              uint32_t height );
 
-private:
-  unsigned int m_kernelSize = 3;		// Dilation and erosion kernel size
+  void destroy ();
+
+  int (*dilation) ( PelStorage *buff,
+                    PelStorage *Wbuf,
+                    uint32_t bitDepth,
+                    ComponentID compID,
+                    int numIter,
+                    int iter,
+                    Pel Value );
+
+#if ENABLE_SIMD_OPT_FGA && defined( TARGET_SIMD_X86 )
+  void initFGAMorphX86();
+  template <X86_VEXT vext>
+  void _initFGAMorphX86();
+#endif
+
+  PelStorage* m_dilationBuf = nullptr;
+  PelStorage* m_dilationBuf2 = nullptr;
+  PelStorage* m_dilationBuf4 = nullptr;
 };
 
 
-class FGAnalyser
+class FGAnalyzer
 {
 public:
-  FGAnalyser();
-  ~FGAnalyser();
+  FGAnalyzer();
+  ~FGAnalyzer();
 
-  void init(const int width,
-            const int height,
-            const int sourcePaddingWidth,
-            const int sourcePaddingHeight,
-            const InputColourSpaceConversion ipCSC,
-            const bool         clipInputVideoToRec709Range,
-            const ChromaFormat inputChroma,
-            const BitDepths& inputBitDepths,
-            const BitDepths& outputBitDepths,
-            const int frameSkip,
-            const bool doAnalysis[],
-            std::string filmGrainExternalMask,
-            std::string filmGrainExternalDenoised);
-  		   
+  int                             prevAnalysisPoc                = -1;
+
+  void init( const int                        width,
+             const int                        height,
+             const ChromaFormat               inputChroma,
+             const int                        *outputBitDepths,
+             const bool doAnalysis[] );
   void destroy        ();
-  void initBufs       (Picture* pic);
-  void estimate_grain (Picture* pic);
 
-  int                                     getLog2scaleFactor()  { return m_log2ScaleFactor; };
-  SEIFilmGrainCharacteristics::CompModel  getCompModel(int idx) { return m_compModel[idx];  };
+  void estimateGrainParameters ( Picture* pic );
+
+  int getLog2scaleFactor()  { return m_log2ScaleFactor; };
+
+  SeiFgc::CompModel  getCompModel( int idx ) { return m_compModel[idx];  };
 
 private:
-  std::string                      m_filmGrainExternalMask     = "";
-  std::string                      m_filmGrainExternalDenoised = "";
-  int                              m_sourcePadding[2];
-  InputColourSpaceConversion       m_ipCSC;
-  bool                             m_clipInputVideoToRec709Range;
-  BitDepths                        m_bitDepthsIn;
-  int                              m_frameSkip;
-  ChromaFormat                     m_chromaFormatIdc;
-  BitDepths     m_bitDepths;
-  bool          m_doAnalysis[MAX_NUM_COMPONENT] = { false, false, false };
+  int                             *m_bitDepths;
+  ChromaFormat                    m_inputChromaFormat;
+  bool                            m_doAnalysis[ComponentID::MAX_NUM_COMP] = { true, true, true };
 
-  Canny    m_edgeDetector;
-  Morph    m_morphOperation;
-  double   m_lowIntensityRatio            = 0.1;                    // supress everything below 0.1*maxIntensityOffset
+  Canny                           m_edgeDetector;
+  Morph                           m_morphOperation;
+  double                          m_lowIntensityRatio            = 0.1;           // supress everything below 0.1*maxIntensityOffset
 
-  static constexpr double m_tapFilter[3]  = { 1, 2, 1 };
-  static constexpr double m_normTap       = 4.0;
+  CoeffBuf                        * m_dctGrainBlockList;
+  TCoeff                          * m_coeffBuf;
+  int                             m_numDctGrainBlocks;
+
+  std::vector<double>             coeffs;
+  std::vector<double>             scalingVec;
+  std::vector<int>                quantVec;
+
+  std::vector<int>                vecMean;
+  std::vector<int>                vecVar;
+
+  double                          meanSquaredDctGrain[DATA_BASE_SIZE][DATA_BASE_SIZE];
+
+  /* Interval points for fitFunction */
+  std::vector<int>                vec_mean_intensity;
+  std::vector<int>                vec_variance_intensity;
+  std::vector<int>                element_number_per_interval;
+  std::vector<int>                tmp_data_x;
+  std::vector<int>                tmp_data_y;
+
+  static constexpr double         m_tapFilter[3]                = { 1, 2, 1 };
+  static constexpr double         m_normTap                     = 4.0;
 
   // fg model parameters
-  int                                    m_log2ScaleFactor;
-  SEIFilmGrainCharacteristics::CompModel m_compModel[MAX_NUM_COMPONENT];
+  int                             m_log2ScaleFactor;
+  std::vector<std::array<int, 3>> finalIntervalsandScalingFactors;   // lower_bound, upper_bound, scaling_factor
+  SeiFgc::CompModel               m_compModel[ComponentID::MAX_NUM_COMP];
 
-  PelStorage *m_originalBuf = nullptr;
-  PelStorage *m_workingBuf  = nullptr;
-  PelStorage *m_maskBuf     = nullptr;
+  const PelStorage                *m_originalBuf             = nullptr;
+  const PelStorage                *m_workingBuf              = nullptr;
+  PelStorage                      *m_maskBuf                 = nullptr;
+  PelStorage                      *m_grainEstimateBuf        = nullptr;
+  PelStorage                      *m_workingBufSubsampled2   = nullptr;
+  PelStorage                      *m_maskSubsampled2         = nullptr;
+  PelStorage                      *m_workingBufSubsampled4   = nullptr;
+  PelStorage                      *m_maskSubsampled4         = nullptr;
+  PelStorage                      *m_maskUpsampled           = nullptr;
+  // for DCT
+  TCoeff                          *m_DCTinout                = nullptr;
+  TCoeff                          *m_DCTtemp                 = nullptr;
 
-  std::vector<int> m_storedVecMeanIntensity[3];
-  std::vector<int> m_storedVecVarianceIntensity[3];
-  std::vector<int> m_storedElementNumberPerInterval[3];
+  void findMask ( ComponentID compID );
 
-  void findMask                     ();
+  void blockTransform ( CoeffBuf& currentCoeffBuf,
+                        int offsetX,
+                        int offsetY,
+                        uint32_t bitDepth,
+                        ComponentID compId );
 
-  void estimate_grain_parameters    ();
-  void block_transform              (const PelStorage& buff1, std::vector<PelMatrix>& squared_dct_grain_block_list, int offsetX, int offsetY, unsigned int bitDepth, ComponentID compID, unsigned int windowSize);
-  void estimate_cutoff_freq         (const std::vector<PelMatrix>& blocks, const std::vector<int>& vec_mean, unsigned int bitDepth, ComponentID compID, unsigned int windowSize);
-  int  cutoff_frequency             (std::vector<double>& mean, unsigned int windowSize);
-  void estimate_scaling_factors     (std::vector<int>& data_x, std::vector<int>& data_y, unsigned int bitDepth, ComponentID compID);
+  void adaptiveSampling ( int bins,
+                          double threshold,
+                          std::vector<int>& significantIndices,
+                          bool isRow,
+                          int startIdx );
 
-  bool fit_function                 (std::vector<int>& data_x, std::vector<int>& data_y, std::vector<double>& coeffs, std::vector<double>& scalingVec,
-                                     int order, int bitDepth, bool second_pass, ComponentID compID);
-  void avg_scaling_vec              (std::vector<double> &scalingVec, ComponentID compID, int bitDepth);
-  bool lloyd_max                    (std::vector<double>& scalingVec, std::vector<int>& quantizedVec, double& distortion, int numQuantizedLevels, int bitDepth);
-  void quantize                     (std::vector<double>& scalingVec, std::vector<double>& quantizedVec, double& distortion, std::vector<double> partition, std::vector<double> codebook);
-  void extend_points                (std::vector<int>& data_x, std::vector<int>& data_y, int bitDepth);
+  void estimateCutoffFreqAdaptive ( ComponentID compID );
 
-  void setEstimatedParameters       (std::vector<int>& quantizedVec, unsigned int bitDepth, ComponentID compID);
-  void define_intervals_and_scalings(std::vector<std::vector<int>>& parameters, std::vector<int>& quantizedVec, int bitDepth);
-  void scale_down                   (std::vector<std::vector<int>>& parameters, int bitDepth);
-  void confirm_intervals            (std::vector<std::vector<int>>& parameters);
+  void estimateScalingFactors ( uint32_t bitDepth,
+                                ComponentID compID );
 
-  long double ldpow                 (long double n, unsigned p);
-  int         meanVar               (PelStorage& buffer, int windowSize, ComponentID compID, int offsetX, int offsetY, bool getVar);
-  int         count_edges           (PelStorage& buffer, int windowSize, ComponentID compID, int offsetX, int offsetY);
+  bool fitFunction ( int order,
+                     int bitDepth,
+                     bool second_pass );
 
-  void subsample                    (const PelStorage& input, PelStorage& output, ComponentID compID, const int factor = 2, const int padding = 0) const;
-  void upsample                     (const PelStorage& input, PelStorage& output, ComponentID compID, const int factor = 2, const int padding = 0) const;
-  void combineMasks                 (PelStorage& buff, PelStorage& buff2, ComponentID compID);
-  void suppressLowIntensity         (const PelStorage& buff1, PelStorage& buff2, unsigned int bitDepth, ComponentID compID);
+  void avgScalingVec ( int bitDepth );
 
-}; // END CLASS DEFINITION
+  bool lloydMax ( double& distortion,
+                  int bitDepth );
 
-//! \}
+  void quantize ( std::vector<double>& quantizedVec,
+                  double& distortion,
+                  double partition[],
+                  double codebook[] );
+
+  void extendPoints ( int bitDepth );
+
+  void setEstimatedParameters ( uint32_t bitDepth,
+                                ComponentID compID );
+
+  void defineIntervalsAndScalings ( int bitDepth );
+
+  void scaleDown ( int bitDepth );
+
+  void confirmIntervals ( );
+
+  long double ldpow ( long double n,
+                      unsigned p );
+
+  int countEdges ( int windowSize,
+                   int offsetX,
+                   int offsetY,
+                   ComponentID compID );
+
+  void subsample ( PelStorage& output,
+                   const int factor = 2,
+                   const int padding = 0, 
+                   ComponentID compID = COMP_Y ) const;
+
+  void upsample ( const PelStorage& input,
+                  const int factor = 2,
+                  const int padding = 0,
+                  ComponentID compID = COMP_Y ) const;
+
+  void combineMasks ( ComponentID compId );
+
+  void suppressLowIntensity ( const PelStorage& buff1,
+                              PelStorage& buff2,
+                              uint32_t bitDepth,
+                              ComponentID compId );
+
+  double (*calcVar) ( const Pel* org,
+                      const ptrdiff_t origStride,
+                      const int w,
+                      const int h );
+
+  int (*calcMean) ( const Pel* org,
+                    const ptrdiff_t origStride,
+                    const int w,
+                    const int h );
+
+  void (*fastDCT2_64) ( const TCoeff* src,
+                        TCoeff* dst,
+                        int shift,
+                        int line,
+                        int iSkipLine,
+                        int iSkipLine2 );
+
+#if ENABLE_SIMD_OPT_FGA && defined( TARGET_SIMD_X86 )
+  void initFGAnalyzerX86();
+  template <X86_VEXT vext>
+  void _initFGAnalyzerX86();
+#endif
+};
+
+} // namespace vvenc
 
 #endif // __SEIFILMGRAINANALYZER__
 

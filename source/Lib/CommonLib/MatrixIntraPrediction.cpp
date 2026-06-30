@@ -1,39 +1,50 @@
-/* The copyright in this software is being made available under the BSD
-* License, included below. This software may be subject to other third party
-* and contributor rights, including patent rights, and no such rights are
-* granted under this license.
-*
-* Copyright (c) 2010-2025, ITU/ISO/IEC
-* All rights reserved.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*  * Redistributions of source code must retain the above copyright notice,
-*    this list of conditions and the following disclaimer.
-*  * Redistributions in binary form must reproduce the above copyright notice,
-*    this list of conditions and the following disclaimer in the documentation
-*    and/or other materials provided with the distribution.
-*  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
-*    be used to endorse or promote products derived from this software without
-*    specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
-* BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-* THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
+
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
+
 
 /** \file     MatrixIntraPrediction.cpp
 \brief    matrix-based intra prediction class
 */
+
 
 #include "MatrixIntraPrediction.h"
 #include "dtrace_next.h"
@@ -41,57 +52,54 @@
 #include "UnitTools.h"
 #include "MipData.h"
 
+namespace vvenc {
+
+static const int MIP_MAX_INPUT_SIZE             =  8;
+static const int MIP_MAX_REDUCED_OUTPUT_SAMPLES = 64;
+
 MatrixIntraPrediction::MatrixIntraPrediction()
-  : m_component(MAX_NUM_COMPONENT)
-  , m_reducedBoundary(MIP_MAX_INPUT_SIZE)
-  , m_reducedBoundaryTransposed(MIP_MAX_INPUT_SIZE)
-  , m_inputOffset(0)
-  , m_inputOffsetTransp(0)
-  , m_refSamplesTop(MIP_MAX_WIDTH)
-  , m_refSamplesLeft(MIP_MAX_HEIGHT)
-  , m_blockSize(0, 0)
-  , m_sizeId(MipSizeId::S0)
-  , m_reducedBdrySize(0)
-  , m_reducedPredSize(0)
-  , m_upsmpFactorHor(0)
-  , m_upsmpFactorVer(0)
+  : m_reducedBoundary       (nullptr)
+  , m_reducedBoundaryTransp (nullptr)
+  , m_inputOffset           ( 0 )
+  , m_inputOffsetTransp     ( 0 )
+  , m_refSamplesTop         (nullptr)
+  , m_refSamplesLeft        (nullptr)
+  , m_blockSize             ( 0, 0 )
+  , m_sizeId                ( 0 )
+  , m_reducedBdrySize       ( 0 )
+  , m_reducedPredSize       ( 0 )
+  , m_upsmpFactorHor        ( 0 )
+  , m_upsmpFactorVer        ( 0 )
 {
+  m_reducedBoundary       = (Pel*)xMalloc( Pel, MIP_MAX_INPUT_SIZE ); 
+  m_reducedBoundaryTransp = (Pel*)xMalloc( Pel, MIP_MAX_INPUT_SIZE );
 }
 
-void MatrixIntraPrediction::prepareInputForPred(const CPelBuf &pSrc, const Area &block, const int bitDepth,
-                                                const ComponentID compId)
+MatrixIntraPrediction::~MatrixIntraPrediction()
 {
-  m_component = compId;
+  xFree( m_reducedBoundary );       m_reducedBoundary = nullptr;
+  xFree( m_reducedBoundaryTransp ); m_reducedBoundaryTransp = nullptr;
+}
 
+void MatrixIntraPrediction::prepareInputForPred(const CPelBuf &pSrc, const Area& block, const int bitDepth)
+{
   // Step 1: Save block size and calculate dependent values
   initPredBlockParams(block);
 
-  // Step 2: Get the input data (left and top reference samples)
-  m_refSamplesTop.resize(block.width);
-  for (int x = 0; x < block.width; x++)
-  {
-    m_refSamplesTop[x] = pSrc.at(x + 1, 0);
-  }
-
-  m_refSamplesLeft.resize(block.height);
-  for (int y = 0; y < block.height; y++)
-  {
-    m_refSamplesLeft[y] = pSrc.at(y + 1, 1);
-  }
+  m_refSamplesTop  = pSrc.bufAt(1, 0);
+  m_refSamplesLeft = pSrc.bufAt(1, 1);
 
   // Step 3: Compute the reduced boundary via Haar-downsampling (input for the prediction)
   const int inputSize = 2 * m_reducedBdrySize;
-  m_reducedBoundary          .resize( inputSize );
-  m_reducedBoundaryTransposed.resize( inputSize );
 
-  Pel *const topReduced = m_reducedBoundary.data();
-  boundaryDownsampling1D( topReduced, m_refSamplesTop.data(), block.width, m_reducedBdrySize );
+  Pel* const topReduced = m_reducedBoundary;
+  boundaryDownsampling1D( topReduced, m_refSamplesTop, block.width, m_reducedBdrySize );
 
-  Pel *const leftReduced = m_reducedBoundary.data() + m_reducedBdrySize;
-  boundaryDownsampling1D( leftReduced, m_refSamplesLeft.data(), block.height, m_reducedBdrySize );
+  Pel* const leftReduced = m_reducedBoundary + m_reducedBdrySize;
+  boundaryDownsampling1D( leftReduced, m_refSamplesLeft, block.height, m_reducedBdrySize );
 
-  Pel *const leftReducedTransposed = m_reducedBoundaryTransposed.data();
-  Pel *const topReducedTransposed  = m_reducedBoundaryTransposed.data() + m_reducedBdrySize;
+  Pel* const leftReducedTransposed = m_reducedBoundaryTransp;
+  Pel* const topReducedTransposed  = m_reducedBoundaryTransp + m_reducedBdrySize;
   for( int x = 0; x < m_reducedBdrySize; x++ )
   {
     topReducedTransposed[x] = topReduced[x];
@@ -102,70 +110,103 @@ void MatrixIntraPrediction::prepareInputForPred(const CPelBuf &pSrc, const Area 
   }
 
   // Step 4: Rebase the reduced boundary
-
   m_inputOffset       = m_reducedBoundary[0];
-  m_inputOffsetTransp = m_reducedBoundaryTransposed[0];
+  m_inputOffsetTransp = m_reducedBoundaryTransp[0];
 
-  const bool hasFirstCol = (m_sizeId < MipSizeId::S2);
-  m_reducedBoundary          [0] = hasFirstCol ? ((1 << (bitDepth - 1)) - m_inputOffset      ) : 0; // first column of matrix not needed for large blocks
-  m_reducedBoundaryTransposed[0] = hasFirstCol ? ((1 << (bitDepth - 1)) - m_inputOffsetTransp) : 0;
+  const bool hasFirstCol = (m_sizeId < 2);
+  m_reducedBoundary      [0] = hasFirstCol ? ((1 << (bitDepth - 1)) - m_inputOffset      ) : 0; // first column of matrix not needed for large blocks
+  m_reducedBoundaryTransp[0] = hasFirstCol ? ((1 << (bitDepth - 1)) - m_inputOffsetTransp) : 0;
   for (int i = 1; i < inputSize; i++)
   {
-    m_reducedBoundary          [i] -= m_inputOffset;
-    m_reducedBoundaryTransposed[i] -= m_inputOffsetTransp;
+    m_reducedBoundary      [i] -= m_inputOffset;
+    m_reducedBoundaryTransp[i] -= m_inputOffsetTransp;
   }
 }
 
-void MatrixIntraPrediction::predBlock(Pel *const result, const int modeIdx, const bool transpose, const int bitDepth,
-                                      const ComponentID compId)
+void MatrixIntraPrediction::predBlock(Pel* const result, const int modeIdx, const bool transpose, const int bitDepth)
 {
-  CHECK(m_component != compId, "Boundary has not been prepared for this component.");
+  ALIGN_DATA( MEMORY_ALIGN_DEF_SIZE, Pel bufReducedPred[MIP_MAX_REDUCED_OUTPUT_SAMPLES] );
 
-  const bool needUpsampling = ( m_upsmpFactorHor > 1 ) || ( m_upsmpFactorVer > 1 );
+  const bool       needUpsampling  = ( m_upsmpFactorHor > 1 ) || ( m_upsmpFactorVer > 1 );
+  Pel* const       reducedPred     = needUpsampling ? bufReducedPred : result;
+  const Pel* const reducedBoundary = transpose ? m_reducedBoundaryTransp : m_reducedBoundary;
 
-  const uint8_t* matrix = getMatrixData(modeIdx);
+  {
+    const int outputSize = m_reducedPredSize;
+    const int inputSize  = 2 * m_reducedBdrySize;
+    const int offset     = transpose ? m_inputOffsetTransp : m_inputOffset;
+    const int maxVal     = ( 1 << bitDepth ) - 1;
 
-  static_vector<Pel, MIP_MAX_REDUCED_OUTPUT_SAMPLES> bufReducedPred(m_reducedPredSize * m_reducedPredSize);
+    if( outputSize == 8)
+    {
+      g_pelBufOP.mipMatrixMul_8_8( reducedPred, reducedBoundary, &mipMatrix16x16[modeIdx][0][0], maxVal, offset, transpose );
+    }
+    else
+    {
+      if( inputSize == 4)
+      {
+        g_pelBufOP.mipMatrixMul_4_4( reducedPred, reducedBoundary, &mipMatrix4x4[modeIdx][0][0], maxVal, offset, transpose );
+      }
+      else
+      {
+        g_pelBufOP.mipMatrixMul_8_4( reducedPred, reducedBoundary, &mipMatrix8x8[modeIdx][0][0], maxVal, offset, transpose );
+      }
+    }
+  }
 
-  Pel *const                                         reducedPred = needUpsampling ? bufReducedPred.data() : result;
-  const Pel *const reducedBoundary = transpose ? m_reducedBoundaryTransposed.data() : m_reducedBoundary.data();
-
-  computeReducedPred(reducedPred, reducedBoundary, matrix, transpose, bitDepth);
+  // Reduced prediction is transposed if ( transpose && needUpsampling ).
   if( needUpsampling )
   {
-    predictionUpsampling( result, reducedPred );
-  }
-}
+    const Pel* verSrc   = reducedPred;
+    SizeType verSrcStep = m_blockSize.width;
 
-MatrixIntraPrediction::MipSizeId MatrixIntraPrediction::getMipSizeId(const Size &block)
-{
-  if (block.width == 4 && block.height == 4)
-  {
-    return MipSizeId::S0;
-  }
-  else if (block.width == 4 || block.height == 4 || (block.width == 8 && block.height == 8))
-  {
-    return MipSizeId::S1;
-  }
-  else
-  {
-    return MipSizeId::S2;
-  }
-}
+    if( m_upsmpFactorHor > 1 )
+    {
+      Pel* const horDst = result + (m_upsmpFactorVer - 1) * m_blockSize.width;
+      verSrc = horDst;
+      verSrcStep *= m_upsmpFactorVer;
 
-int MatrixIntraPrediction::getNumModesMip(const Size &block)
-{
-  switch (getMipSizeId(block))
-  {
-  case MipSizeId::S0:
-    return 16;
+      if( m_reducedPredSize == 4)
+      {
+        if( m_upsmpFactorHor == 2 )
+          predictionUpsampling1DHor<4,1>( horDst, reducedPred, &m_refSamplesLeft[0], verSrcStep, m_upsmpFactorVer );
+        else if( m_upsmpFactorHor == 4 )
+          predictionUpsampling1DHor<4,2>( horDst, reducedPred, &m_refSamplesLeft[0], verSrcStep, m_upsmpFactorVer );
+        else
+          predictionUpsampling1DHor<4,3>( horDst, reducedPred, &m_refSamplesLeft[0], verSrcStep, m_upsmpFactorVer );
+      }
+      else
+      {
+        if( m_upsmpFactorHor == 2 )
+          predictionUpsampling1DHor<8,1>( horDst, reducedPred, &m_refSamplesLeft[0], verSrcStep, m_upsmpFactorVer );
+        else if( m_upsmpFactorHor == 4 )
+          predictionUpsampling1DHor<8,2>( horDst, reducedPred, &m_refSamplesLeft[0], verSrcStep, m_upsmpFactorVer );
+        else
+          predictionUpsampling1DHor<8,3>( horDst, reducedPred, &m_refSamplesLeft[0], verSrcStep, m_upsmpFactorVer );
+      }
+    }
 
-  case MipSizeId::S1:
-    return 8;
-
-  case MipSizeId::S2:
-  default:
-    return 6;
+    if( m_upsmpFactorVer > 1 )
+    {
+      if( m_reducedPredSize == 4)
+      {
+        if( m_upsmpFactorVer == 2 )
+          predictionUpsampling1DVer<4,1>( result, verSrc, &m_refSamplesTop[0], m_blockSize.width, verSrcStep );
+        else if( m_upsmpFactorVer == 4 )
+          predictionUpsampling1DVer<4,2>( result, verSrc, &m_refSamplesTop[0], m_blockSize.width, verSrcStep );
+        else
+          predictionUpsampling1DVer<4,3>( result, verSrc, &m_refSamplesTop[0], m_blockSize.width, verSrcStep );
+      }
+      else
+      {
+        if( m_upsmpFactorVer == 2 )
+          predictionUpsampling1DVer<8,1>( result, verSrc, &m_refSamplesTop[0], m_blockSize.width, verSrcStep );
+        else if( m_upsmpFactorVer == 4 )
+          predictionUpsampling1DVer<8,2>( result, verSrc, &m_refSamplesTop[0], m_blockSize.width, verSrcStep );
+        else
+          predictionUpsampling1DVer<8,3>( result, verSrc, &m_refSamplesTop[0], m_blockSize.width, verSrcStep );
+      }
+    }
   }
 }
 
@@ -173,13 +214,13 @@ void MatrixIntraPrediction::initPredBlockParams(const Size& block)
 {
   m_blockSize = block;
   // init size index
-  m_sizeId = getMipSizeId(block);
+  m_sizeId = getMipSizeId( m_blockSize );
 
   // init reduced boundary size
-  m_reducedBdrySize = (m_sizeId == MipSizeId::S0) ? 2 : 4;
+  m_reducedBdrySize = (m_sizeId == 0) ? 2 : 4;
 
   // init reduced prediction size
-  m_reducedPredSize = (m_sizeId < MipSizeId::S2) ? 4 : 8;
+  m_reducedPredSize = ( m_sizeId < 2 ) ? 4 : 8;
 
   // init upsampling factors
   m_upsmpFactorHor = m_blockSize.width  / m_reducedPredSize;
@@ -189,8 +230,7 @@ void MatrixIntraPrediction::initPredBlockParams(const Size& block)
   CHECKD( (m_upsmpFactorVer < 1) || ((m_upsmpFactorVer & (m_upsmpFactorVer - 1)) != 0), "Need power of two vertical upsampling factor." );
 }
 
-void MatrixIntraPrediction::boundaryDownsampling1D(Pel *reducedDst, const Pel *const fullSrc, const SizeType srcLen,
-                                                   const SizeType dstLen)
+void MatrixIntraPrediction::boundaryDownsampling1D(Pel* reducedDst, const Pel* const fullSrc, const SizeType srcLen, const SizeType dstLen)
 {
   if (dstLen < srcLen)
   {
@@ -220,151 +260,78 @@ void MatrixIntraPrediction::boundaryDownsampling1D(Pel *reducedDst, const Pel *c
   }
 }
 
-void MatrixIntraPrediction::predictionUpsampling1D(Pel *const dst, const Pel *const src, const Pel *const bndry,
-                                                   const SizeType srcSizeUpsmpDim, const SizeType srcSizeOrthDim,
-                                                   const SizeType srcStep, const SizeType srcStride,
-                                                   const SizeType dstStep, const SizeType dstStride,
-                                                   const SizeType bndryStep, const unsigned int upsmpFactor)
+template< SizeType predPredSize, unsigned log2UpsmpFactor>
+void MatrixIntraPrediction::predictionUpsampling1DHor(Pel* const dst, const Pel* const src, const Pel* const bndry, const SizeType dstStride, const SizeType bndryStep )
 {
-  const int log2UpsmpFactor = floorLog2( upsmpFactor );
-  CHECKD( upsmpFactor <= 1, "Upsampling factor must be at least 2." );
-  const int roundingOffset = 1 << (log2UpsmpFactor - 1);
+  const int roundingOffset   = 1 << (log2UpsmpFactor - 1);
+  const SizeType upsmpFactor = 1 << log2UpsmpFactor;
 
-  SizeType idxOrthDim = 0;
-  const Pel *srcLine    = src;
-  Pel       *dstLine    = dst;
-  const Pel *bndryLine  = bndry + bndryStep - 1;
-  while( idxOrthDim < srcSizeOrthDim )
+        Pel* dstLine   = dst;
+  const Pel* srcLine   = src;
+  const Pel* bndryLine = bndry + bndryStep - 1;
+
+  for( SizeType idxOrthDim = 0; idxOrthDim < predPredSize; idxOrthDim++ )
   {
-    SizeType idxUpsmpDim = 0;
-    const Pel *before      = bndryLine;
-    const Pel *behind      = srcLine;
-    Pel       *currDst     = dstLine;
-    while( idxUpsmpDim < srcSizeUpsmpDim )
+    const Pel* before  = bndryLine;
+    const Pel* behind  = srcLine;
+          Pel* currDst = dstLine;
+    for( SizeType idxUpsmpDim = 0; idxUpsmpDim < predPredSize; idxUpsmpDim++ )
     {
-      SizeType pos = 1;
-      int scaledBefore = ( *before ) << log2UpsmpFactor;
-      int scaledBehind = 0;
-      while( pos <= upsmpFactor )
+      const int valDiff   = *behind - *before;
+            int scaledVal = ( ( *before ) << log2UpsmpFactor ) + roundingOffset;
+      for( SizeType pos = 0; pos < upsmpFactor; pos++)
       {
-        scaledBefore -= *before;
-        scaledBehind += *behind;
-        *currDst = (scaledBefore + scaledBehind + roundingOffset) >> log2UpsmpFactor;
-
-        pos++;
-        currDst += dstStep;
+        scaledVal += valDiff;
+        *currDst   = scaledVal >> log2UpsmpFactor;
+        currDst++;
       }
-
-      idxUpsmpDim++;
       before = behind;
-      behind += srcStep;
+      behind ++;
     }
 
-    idxOrthDim++;
-    srcLine += srcStride;
-    dstLine += dstStride;
+    srcLine   += predPredSize;
+    dstLine   += dstStride;
     bndryLine += bndryStep;
   }
 }
 
-void MatrixIntraPrediction::predictionUpsampling(Pel *const dst, const Pel *const src) const
+template< SizeType inHeight, unsigned log2UpsmpFactor>
+void MatrixIntraPrediction::predictionUpsampling1DVer(Pel* const dst, const Pel* const src, const Pel* const bndry, const SizeType outWidth, const SizeType srcStep  )
 {
-  const Pel *verSrc     = src;
-  SizeType   verSrcStep = m_blockSize.width;
+  const int roundingOffset   = 1 << (log2UpsmpFactor - 1);
+  const SizeType upsmpFactor = 1 << log2UpsmpFactor;
 
-  if( m_upsmpFactorHor > 1 )
+        Pel* dstLine   = dst;
+  const Pel* srcLine   = src;
+  const Pel* bndryLine = bndry;
+
+  for( SizeType idxOrthDim = 0; idxOrthDim < outWidth; idxOrthDim++ )
   {
-    Pel *const horDst = dst + (m_upsmpFactorVer - 1) * m_blockSize.width;
-    verSrc = horDst;
-    verSrcStep *= m_upsmpFactorVer;
-
-    predictionUpsampling1D( horDst, src, m_refSamplesLeft.data(),
-                            m_reducedPredSize, m_reducedPredSize,
-                            1, m_reducedPredSize, 1, verSrcStep,
-                            m_upsmpFactorVer, m_upsmpFactorHor );
-  }
-
-  if( m_upsmpFactorVer > 1 )
-  {
-    predictionUpsampling1D( dst, verSrc, m_refSamplesTop.data(),
-                            m_reducedPredSize, m_blockSize.width,
-                            verSrcStep, 1, m_blockSize.width, 1,
-                            1, m_upsmpFactorVer );
-  }
-}
-
-const uint8_t* MatrixIntraPrediction::getMatrixData(const int modeIdx) const
-{
-  switch( m_sizeId )
-  {
-  case MipSizeId::S0:
-    return &mipMatrix4x4[modeIdx][0][0];
-
-  case MipSizeId::S1:
-    return &mipMatrix8x8[modeIdx][0][0];
-
-  case MipSizeId::S2:
-  default:
-    return &mipMatrix16x16[modeIdx][0][0];
-  }
-}
-
-void MatrixIntraPrediction::computeReducedPred(Pel *const result, const Pel *const input, const uint8_t *matrix,
-                                               const bool transpose, const int bitDepth)
-{
-  const int inputSize = 2 * m_reducedBdrySize;
-
-  // use local buffer for transposed result
-  static_vector<Pel, MIP_MAX_REDUCED_OUTPUT_SAMPLES> resBufTransposed(m_reducedPredSize * m_reducedPredSize);
-
-  Pel *const resPtr = (transpose) ? resBufTransposed.data() : result;
-
-  int sum = 0;
-  for (int i = 0; i < inputSize; i++)
-  {
-    sum += input[i];
-  }
-  const int offset = (1 << (MIP_SHIFT_MATRIX - 1)) - MIP_OFFSET_MATRIX * sum;
-  CHECK( inputSize != 4 * (inputSize >> 2), "Error, input size not divisible by four" );
-
-  const uint8_t *weight = matrix;
-  const int   inputOffset = transpose ? m_inputOffsetTransp : m_inputOffset;
-
-  const bool redSize = (m_sizeId == MipSizeId::S2);
-  int posRes = 0;
-  for( int y = 0; y < m_reducedPredSize; y++ )
-  {
-    for( int x = 0; x < m_reducedPredSize; x++ )
+    const Pel* before  = bndryLine;
+    const Pel* behind  = srcLine;
+          Pel* currDst = dstLine;
+    for( SizeType idxUpsmpDim = 0; idxUpsmpDim < inHeight; idxUpsmpDim++ )
     {
-      if (redSize)
-      {
-        weight -= 1;
-      }
-      int tmp0 = redSize ? 0 : (input[0] * weight[0]);
-      int tmp1 = input[1] * weight[1];
-      int tmp2 = input[2] * weight[2];
-      int tmp3 = input[3] * weight[3];
-      for (int i = 4; i < inputSize; i += 4)
-      {
-        tmp0 += input[i]     * weight[i];
-        tmp1 += input[i + 1] * weight[i + 1];
-        tmp2 += input[i + 2] * weight[i + 2];
-        tmp3 += input[i + 3] * weight[i + 3];
-      }
-      resPtr[posRes++] = ClipBD<int>(((tmp0 + tmp1 + tmp2 + tmp3 + offset) >> MIP_SHIFT_MATRIX) + inputOffset, bitDepth);
+      const int valDiff   = *behind - *before;
+            int scaledVal = ( ( *before ) << log2UpsmpFactor ) + roundingOffset;
 
-      weight += inputSize;
-    }
-  }
-
-  if( transpose )
-  {
-    for( int y = 0; y < m_reducedPredSize; y++ )
-    {
-      for( int x = 0; x < m_reducedPredSize; x++ )
+      for( SizeType pos = 0; pos < upsmpFactor; pos++)
       {
-        result[ y * m_reducedPredSize + x ] = resPtr[ x * m_reducedPredSize + y ];
+        scaledVal += valDiff;
+        *currDst   = scaledVal >> log2UpsmpFactor;
+        currDst += outWidth;
       }
+      before = behind;
+      behind += srcStep;
     }
+
+    srcLine ++;
+    dstLine ++;
+    bndryLine ++;
   }
 }
+
+
+} // namespace vvenc
+
+//! \}

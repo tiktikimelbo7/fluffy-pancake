@@ -1,128 +1,149 @@
-/* The copyright in this software is being made available under the BSD
-* License, included below. This software may be subject to other third party
-* and contributor rights, including patent rights, and no such rights are
-* granted under this license.
-*
-* Copyright (c) 2010-2025, ITU/ISO/IEC
-* All rights reserved.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*  * Redistributions of source code must retain the above copyright notice,
-*    this list of conditions and the following disclaimer.
-*  * Redistributions in binary form must reproduce the above copyright notice,
-*    this list of conditions and the following disclaimer in the documentation
-*    and/or other materials provided with the distribution.
-*  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
-*    be used to endorse or promote products derived from this software without
-*    specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
-* BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-* THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
+
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
+
 
 
 #include "BinEncoder.h"
-
 #include "CommonLib/Rom.h"
 #include "CommonLib/dtrace_next.h"
 
+//! \ingroup EncoderLib
+//! \{
+
+namespace vvenc {
+
 BinCounter::BinCounter()
-  : m_ctxBinsCodedBuffer(Ctx::NumberOfContexts)
-  , m_numBinsCtx(m_ctxBinsCodedBuffer.data())
-  , m_numBinsEP(0)
-  , m_numBinsTrm(0)
+  : m_CtxBinsCodedBuffer( Ctx::NumberOfContexts )
+  , m_NumBinsCtx        ( m_CtxBinsCodedBuffer.data() )
+  , m_NumBinsEP         ( 0 )
+  , m_NumBinsTrm        ( 0 )
 {}
 
 
 void BinCounter::reset()
 {
-  for (std::size_t k = 0; k < m_ctxBinsCodedBuffer.size(); k++)
+  for( std::size_t k = 0; k < m_CtxBinsCodedBuffer.size(); k++ )
   {
-    m_numBinsCtx[k] = 0;
+    m_NumBinsCtx[k] = 0;
   }
-  m_numBinsEP  = 0;
-  m_numBinsTrm = 0;
+  m_NumBinsEP       = 0;
+  m_NumBinsTrm      = 0;
 }
 
 
 uint32_t BinCounter::getAll() const
 {
-  uint32_t count = m_numBinsEP + m_numBinsTrm;
-  for (std::size_t k = 0; k < m_ctxBinsCodedBuffer.size(); k++)
+  uint32_t  count = m_NumBinsEP + m_NumBinsTrm;
+  for( std::size_t k = 0; k < m_CtxBinsCodedBuffer.size(); k++ )
   {
-    count += m_numBinsCtx[k];
+    count += m_NumBinsCtx[k];
   }
   return count;
 }
 
-template<class BinProbModel>
-BinEncoderBase::BinEncoderBase(const BinProbModel *dummy)
-  : BinEncIf(dummy), m_bitstream(nullptr), m_low(0), m_range(0), m_bufferedByte(0), m_numBufferedBytes(0), m_bitsLeft(0)
+
+
+BinEncoderBase::BinEncoderBase( const BinProbModel* dummy )
+  : BinEncIf          ( dummy )
+  , m_Bitstream       ( 0 )
+  , m_Low             ( 0 )
+  , m_Range           ( 0 )
+  , m_bufferedByte    ( 0 )
+  , m_numBufferedBytes( 0 )
+  , m_bitsLeft        ( 0 )
 {}
 
 void BinEncoderBase::init( OutputBitstream* bitstream )
 {
-  m_bitstream = bitstream;
+  m_Bitstream = bitstream;
 }
 
 void BinEncoderBase::uninit()
 {
-  m_bitstream = nullptr;
+  m_Bitstream = 0;
 }
 
 void BinEncoderBase::start()
 {
-  m_low               = 0;
-  m_range             = 510;
+  m_Low               = 0;
+  m_Range             = 510;
   m_bufferedByte      = 0xff;
   m_numBufferedBytes  = 0;
   m_bitsLeft          = 23;
   BinCounter::reset();
-  m_binStore.reset();
+  m_BinStore. reset();
 }
 
 void BinEncoderBase::finish()
 {
-  if (m_low >> (32 - m_bitsLeft))
+  if( m_Low >> ( 32 - m_bitsLeft ) )
   {
-    m_bitstream->write(m_bufferedByte + 1, 8);
+    m_Bitstream->write( m_bufferedByte + 1, 8 );
     while( m_numBufferedBytes > 1 )
     {
-      m_bitstream->write(0x00, 8);
+      m_Bitstream->write( 0x00, 8 );
       m_numBufferedBytes--;
     }
-    m_low -= 1 << (32 - m_bitsLeft);
+    m_Low -= 1 << ( 32 - m_bitsLeft );
   }
   else
   {
     if( m_numBufferedBytes > 0 )
     {
-      m_bitstream->write(m_bufferedByte, 8);
+      m_Bitstream->write( m_bufferedByte, 8 );
     }
     while( m_numBufferedBytes > 1 )
     {
-      m_bitstream->write(0xff, 8);
+      m_Bitstream->write( 0xff, 8 );
       m_numBufferedBytes--;
     }
   }
-  m_bitstream->write(m_low >> 8, 24 - m_bitsLeft);
+  m_Bitstream->write( m_Low >> 8, 24 - m_bitsLeft );
 }
 
 void BinEncoderBase::restart()
 {
-  m_low               = 0;
-  m_range             = 510;
+  m_Low               = 0;
+  m_Range             = 510;
   m_bufferedByte      = 0xff;
   m_numBufferedBytes  = 0;
   m_bitsLeft          = 23;
@@ -136,7 +157,7 @@ void BinEncoderBase::reset( int qp, int initId )
 
 void BinEncoderBase::resetBits()
 {
-  m_low               = 0;
+  m_Low               = 0;
   m_bufferedByte      = 0xff;
   m_numBufferedBytes  = 0;
   m_bitsLeft          = 23;
@@ -145,13 +166,13 @@ void BinEncoderBase::resetBits()
 
 void BinEncoderBase::encodeBinEP( unsigned bin )
 {
-  DTRACE(g_trace_ctx, D_CABAC, "%d  %d  EP=%d \n", DTRACE_GET_COUNTER(g_trace_ctx, D_CABAC), m_range, bin);
+  DTRACE( g_trace_ctx, D_CABAC, "%d" "  " "%d" "  EP=%d \n", DTRACE_GET_COUNTER( g_trace_ctx, D_CABAC ), m_Range, bin );
 
   BinCounter::addEP();
-  m_low <<= 1;
+  m_Low <<= 1;
   if( bin )
   {
-    m_low += m_range;
+    m_Low += m_Range;
   }
   m_bitsLeft--;
   if( m_bitsLeft < 12 )
@@ -164,12 +185,11 @@ void BinEncoderBase::encodeBinsEP( unsigned bins, unsigned numBins )
 {
   for(int i = 0; i < numBins; i++)
   {
-    DTRACE(g_trace_ctx, D_CABAC, "%d  %d  EP=%d \n", DTRACE_GET_COUNTER(g_trace_ctx, D_CABAC), m_range,
-           (bins >> (numBins - 1 - i)) & 1);
+    DTRACE( g_trace_ctx, D_CABAC, "%d" "  " "%d" "  EP=%d \n", DTRACE_GET_COUNTER( g_trace_ctx, D_CABAC ), m_Range, ( bins >> ( numBins - 1 - i ) ) & 1 );
   }
 
   BinCounter::addEP( numBins );
-  if (m_range == 256)
+  if( m_Range == 256 )
   {
     encodeAlignedBinsEP( bins, numBins );
     return;
@@ -178,8 +198,8 @@ void BinEncoderBase::encodeBinsEP( unsigned bins, unsigned numBins )
   {
     numBins          -= 8;
     unsigned pattern  = bins >> numBins;
-    m_low <<= 8;
-    m_low += m_range * pattern;
+    m_Low           <<= 8;
+    m_Low            += m_Range * pattern;
     bins             -= pattern << numBins;
     m_bitsLeft       -= 8;
     if( m_bitsLeft < 12 )
@@ -187,8 +207,8 @@ void BinEncoderBase::encodeBinsEP( unsigned bins, unsigned numBins )
       writeOut();
     }
   }
-  m_low <<= numBins;
-  m_low += m_range * bins;
+  m_Low     <<= numBins;
+  m_Low      += m_Range * bins;
   m_bitsLeft -= numBins;
   if( m_bitsLeft < 12 )
   {
@@ -206,7 +226,7 @@ void BinEncoderBase::encodeRemAbsEP(unsigned bins, unsigned goRicePar, unsigned 
     encodeBinsEP((1 << length) - 2, length);
     encodeBinsEP(bins & bitMask, goRicePar);
   }
-  else
+  else 
   {
     const unsigned  maxPrefixLength = 32 - cutoff - maxLog2TrDynamicRange;
     unsigned        prefixLength = 0;
@@ -237,22 +257,22 @@ void BinEncoderBase::encodeRemAbsEP(unsigned bins, unsigned goRicePar, unsigned 
 void BinEncoderBase::encodeBinTrm( unsigned bin )
 {
   BinCounter::addTrm();
-  m_range -= 2;
+  m_Range -= 2;
   if( bin )
   {
-    m_low += m_range;
-    m_low <<= 7;
-    m_range = 2 << 7;
+    m_Low      += m_Range;
+    m_Low     <<= 7;
+    m_Range     = 2 << 7;
     m_bitsLeft -= 7;
   }
-  else if (m_range >= 256)
+  else if( m_Range >= 256 )
   {
     return;
   }
   else
   {
-    m_low <<= 1;
-    m_range <<= 1;
+    m_Low     <<= 1;
+    m_Range   <<= 1;
     m_bitsLeft--;
   }
   if( m_bitsLeft < 12 )
@@ -264,7 +284,7 @@ void BinEncoderBase::encodeBinTrm( unsigned bin )
 
 void BinEncoderBase::align()
 {
-  m_range = 256;
+  m_Range = 256;
 }
 
 
@@ -291,7 +311,7 @@ void BinEncoderBase::encodeAlignedBinsEP( unsigned bins, unsigned numBins )
     unsigned binsToCode = std::min<unsigned>( remBins, 8); //code bytes if able to take advantage of the system's byte-write function
     unsigned binMask    = ( 1 << binsToCode ) - 1;
     unsigned newBins    = ( bins >> ( remBins - binsToCode ) ) & binMask;
-    m_low               = (m_low << binsToCode) + (newBins << 8);   // range is known to be 256
+    m_Low               = ( m_Low << binsToCode ) + ( newBins << 8 ); //range is known to be 256
     remBins            -= binsToCode;
     m_bitsLeft         -= binsToCode;
     if( m_bitsLeft < 12 )
@@ -303,9 +323,9 @@ void BinEncoderBase::encodeAlignedBinsEP( unsigned bins, unsigned numBins )
 
 void BinEncoderBase::writeOut()
 {
-  unsigned leadByte = m_low >> (24 - m_bitsLeft);
+  unsigned leadByte = m_Low >> ( 24 - m_bitsLeft );
   m_bitsLeft       += 8;
-  m_low &= 0xffffffffu >> m_bitsLeft;
+  m_Low            &= 0xffffffffu >> m_bitsLeft;
   if( leadByte == 0xff )
   {
     m_numBufferedBytes++;
@@ -317,11 +337,11 @@ void BinEncoderBase::writeOut()
       unsigned carry  = leadByte >> 8;
       unsigned byte   = m_bufferedByte + carry;
       m_bufferedByte  = leadByte & 0xff;
-      m_bitstream->write(byte, 8);
+      m_Bitstream->write( byte, 8 );
       byte            = ( 0xff + carry ) & 0xff;
       while( m_numBufferedBytes > 1 )
       {
-        m_bitstream->write(byte, 8);
+        m_Bitstream->write( byte, 8 );
         m_numBufferedBytes--;
       }
     }
@@ -333,29 +353,30 @@ void BinEncoderBase::writeOut()
   }
 }
 
-template<class BinProbModel>
-TBinEncoder<BinProbModel>::TBinEncoder()
-  : BinEncoderBase(static_cast<const BinProbModel *>(nullptr)), m_ctx(static_cast<CtxStore<BinProbModel> &>(*this))
+
+
+BinEncoder::BinEncoder()
+  : BinEncoderBase( static_cast<const BinProbModel*>    ( nullptr ) )
+  , m_Ctx         ( static_cast<CtxStore&>( *this   ) )
 {}
 
-template <class BinProbModel>
-void TBinEncoder<BinProbModel>::encodeBin( unsigned bin, unsigned ctxId )
+void BinEncoder::encodeBin( unsigned bin, unsigned ctxId )
 {
   BinCounter::addCtx( ctxId );
-  BinProbModel &probModel = m_ctx[ctxId];
-  uint32_t      lpsRange  = probModel.getLPS(m_range);
+  BinProbModel& rcProbModel = m_Ctx[ctxId];
+  uint32_t      LPS         = rcProbModel.getLPS( m_Range );
 
-  DTRACE(g_trace_ctx, D_CABAC, "%d %d %d  [%d:%d]  %2d(MPS=%d)    -  %d\n", DTRACE_GET_COUNTER(g_trace_ctx, D_CABAC),
-         ctxId, m_range, m_range - lpsRange, lpsRange, (unsigned int) (probModel.state()), bin == probModel.mps(), bin);
+//  DTRACE( g_trace_ctx, D_CABAC, "%d" " %d " "%d" "  " "[%d:%d]" "  " "%2d(MPS=%d)"  "  " "  -  " "%d" "\n", DTRACE_GET_COUNTER( g_trace_ctx, D_CABAC ), ctxId, m_Range, m_Range - LPS, LPS, ( unsigned int ) ( rcProbModel.state() ), bin == rcProbModel.mps(), bin );
+  DTRACE( g_trace_ctx, D_CABAC, " %d " "%d" "  " "[%d:%d]" "  " "%2d(MPS=%d)"  "  " "  -  " "%d" "\n", DTRACE_GET_COUNTER( g_trace_ctx, D_CABAC ), m_Range, m_Range - LPS, LPS, (unsigned int)( rcProbModel.state() ), bin == rcProbModel.mps(), bin );
 
-  m_range -= lpsRange;
-  if (bin != probModel.mps())
+  m_Range   -=  LPS;
+  if( bin != rcProbModel.mps() )
   {
-    int numBits = probModel.getRenormBitsLPS(lpsRange);
+    int numBits   = rcProbModel.getRenormBitsLPS( LPS );
     m_bitsLeft   -= numBits;
-    m_low += m_range;
-    m_low   = m_low << numBits;
-    m_range = lpsRange << numBits;
+    m_Low        += m_Range;
+    m_Low         = m_Low << numBits;
+    m_Range       = LPS   << numBits;
     if( m_bitsLeft < 12 )
     {
       writeOut();
@@ -363,29 +384,29 @@ void TBinEncoder<BinProbModel>::encodeBin( unsigned bin, unsigned ctxId )
   }
   else
   {
-    if (m_range < 256)
+    if( m_Range < 256 )
     {
-      int numBits = probModel.getRenormBitsRange(m_range);
+      //int numBits   = rcProbModel.getRenormBitsRange();
+      int numBits   = 1;
       m_bitsLeft   -= numBits;
-      m_low <<= numBits;
-      m_range <<= numBits;
+      m_Low       <<= numBits;
+      m_Range     <<= numBits;
       if( m_bitsLeft < 12 )
       {
         writeOut();
       }
     }
   }
-  probModel.update(bin);
-  BinEncoderBase::m_binStore.addBin(bin, ctxId);
+  rcProbModel.update( bin );
+  BinEncoderBase::m_BinStore.addBin( bin, ctxId );
 }
 
-template <class BinProbModel>
-BinEncIf* TBinEncoder<BinProbModel>::getTestBinEncoder() const
+BinEncIf* BinEncoder::getTestBinEncoder() const
 {
   BinEncIf* testBinEncoder = 0;
-  if (m_binStore.inUse())
+  if( m_BinStore.inUse() )
   {
-    testBinEncoder = new TBinEncoder<BinProbModel>();
+    testBinEncoder = new BinEncoder();
   }
   return testBinEncoder;
 }
@@ -394,11 +415,10 @@ BinEncIf* TBinEncoder<BinProbModel>::getTestBinEncoder() const
 
 
 
-template <class BinProbModel>
 BitEstimatorBase::BitEstimatorBase( const BinProbModel* dummy )
   : BinEncIf      ( dummy )
 {
-  m_estFracBits = 0;
+  m_EstFracBits = 0;
 }
 
 void BitEstimatorBase::encodeRemAbsEP(unsigned bins, unsigned goRicePar, unsigned cutoff, int maxLog2TrDynamicRange)
@@ -406,9 +426,9 @@ void BitEstimatorBase::encodeRemAbsEP(unsigned bins, unsigned goRicePar, unsigne
   const unsigned threshold = cutoff << goRicePar;
   if (bins < threshold)
   {
-    m_estFracBits += BinProbModelBase::estFracBitsEP((bins >> goRicePar) + 1 + goRicePar);
+    m_EstFracBits += BinProbModelBase::estFracBitsEP((bins >> goRicePar) + 1 + goRicePar);
   }
-  else
+  else 
   {
     const unsigned  maxPrefixLength = 32 - cutoff - maxLog2TrDynamicRange;
     unsigned        prefixLength = 0;
@@ -427,7 +447,7 @@ void BitEstimatorBase::encodeRemAbsEP(unsigned bins, unsigned goRicePar, unsigne
       }
       suffixLength = prefixLength + goRicePar + 1; //+1 for the separator bit
     }
-    m_estFracBits += BinProbModelBase::estFracBitsEP(cutoff + prefixLength + suffixLength);
+    m_EstFracBits += BinProbModelBase::estFracBitsEP(cutoff + prefixLength + suffixLength);
   }
 }
 
@@ -435,18 +455,17 @@ void BitEstimatorBase::align()
 {
   static const uint64_t add   = BinProbModelBase::estFracBitsEP() - 1;
   static const uint64_t mask  = ~add;
-  m_estFracBits += add;
-  m_estFracBits &= mask;
+  m_EstFracBits += add;
+  m_EstFracBits &= mask;
 }
 
-template<class BinProbModel>
-TBitEstimator<BinProbModel>::TBitEstimator()
-  : BitEstimatorBase(static_cast<const BinProbModel *>(nullptr)), m_ctx(static_cast<CtxStore<BinProbModel> &>(*this))
+
+BitEstimator::BitEstimator()
+  : BitEstimatorBase  ( static_cast<const BinProbModel*>    ( nullptr) )
+  , m_Ctx             ( static_cast<CtxStore&>              ( *this  ) )
 {}
 
+} // namespace vvenc
 
-
-template class TBinEncoder<BinProbModel_Std>;
-
-template class TBitEstimator<BinProbModel_Std>;
+//! \}
 

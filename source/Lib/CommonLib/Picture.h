@@ -1,333 +1,316 @@
-/* The copyright in this software is being made available under the BSD
-* License, included below. This software may be subject to other third party
-* and contributor rights, including patent rights, and no such rights are
-* granted under this license.
-*
-* Copyright (c) 2010-2025, ITU/ISO/IEC
-* All rights reserved.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*  * Redistributions of source code must retain the above copyright notice,
-*    this list of conditions and the following disclaimer.
-*  * Redistributions in binary form must reproduce the above copyright notice,
-*    this list of conditions and the following disclaimer in the documentation
-*    and/or other materials provided with the distribution.
-*  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
-*    be used to endorse or promote products derived from this software without
-*    specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
-* BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-* THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
 
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
 /** \file     Picture.h
  *  \brief    Description of a coded picture
  */
 
-#ifndef __PICTURE__
-#define __PICTURE__
+#pragma once
 
 #include "CommonDef.h"
-
 #include "Common.h"
-#include "Unit.h"
-#include "Buffer.h"
 #include "Unit.h"
 #include "Slice.h"
 #include "CodingStructure.h"
-#include "Hash.h"
-#include "MCTS.h"
-#include "SEIColourTransform.h"
+#include "BitStream.h"
+#include "Reshape.h"
+
 #include <deque>
-#include "SEIFilmGrainSynthesizer.h"
+#include <chrono>
+#include <atomic>
+
+//! \ingroup CommonLib
+//! \{
+
+namespace vvenc {
 
 class SEI;
-class AQpLayer;
+class SEIDecodedPictureHash;
+class EncRCPic;
+class PicShared;
+class MsgLog;
 
 typedef std::list<SEI*> SEIMessages;
 
-#define M_BUFS(JID,PID) m_bufs[PID]
 
-#if GDR_ENABLED
-struct GdrPicParam
+struct StopClock
 {
-  bool inGdrInterval = false;
-  int  verBoundary   = -1;
+  StopClock() : m_startTime(), m_timer() {}
+
+  int  getTimerInSec() const { return (int)std::chrono::duration_cast<std::chrono::seconds>( m_timer ).count(); };
+  void resetTimer()          { m_timer = std::chrono::steady_clock::duration::zero(); }
+  void startTimer()          { m_startTime  = std::chrono::steady_clock::now(); }
+  void stopTimer()           { auto endTime = std::chrono::steady_clock::now(); m_timer += endTime - m_startTime; m_startTime = endTime; }
+
+  std::chrono::steady_clock::time_point m_startTime;
+  std::chrono::steady_clock::duration   m_timer;
 };
-#endif
+
+
+struct PicVisAct
+{
+  PicVisAct()
+    : spatAct       { 0, 0 }
+    , prevTL0spatAct{ 0, 0 }
+    , visAct        ( 0 )
+    , visActTL0     ( 0 )
+  {
+  }
+  void reset() { *this = PicVisAct(); }
+  uint16_t spatAct[MAX_NUM_CH];
+  uint16_t prevTL0spatAct[MAX_NUM_CH];
+  uint16_t visAct;
+  uint16_t visActTL0;
+};
+
+struct Picture;
+
+class BlkStat
+{
+public:
+  BlkStat()
+    : m_bResetAMaxBT( true )
+  {
+  }
+
+  ~BlkStat()
+  {
+  }
+
+  void storeBlkSize ( const Picture& pic );
+  void updateMaxBT  ( const Slice& slice, const BlkStat& blkStat );
+  void setSliceMaxBT( Slice& slice );
+
+protected:
+  uint32_t m_uiBlkSize[NUM_AMAXBT_LAYER];
+  uint32_t m_uiNumBlk[NUM_AMAXBT_LAYER];
+  uint32_t m_uiPrevISlicePOC;
+  bool     m_bResetAMaxBT;
+};
+
+struct PicApsGlobal{
+  int      poc;
+  unsigned tid;
+  bool     initalized = false;
+  int      refCnt = 0;
+  ParameterSetMap<APS> apsMap;
+  PicApsGlobal( int _p ) : poc(_p), tid(MAX_UINT), apsMap( MAX_NUM_APS * MAX_NUM_APS_TYPE ) {}
+  PicApsGlobal( int _p, unsigned _t ) : poc(_p), tid(_t), apsMap( MAX_NUM_APS * MAX_NUM_APS_TYPE ) {}
+};
 
 struct Picture : public UnitArea
 {
   uint32_t margin;
   Picture();
 
-  void create(const bool useWrapAround, const ChromaFormat& _chromaFormat, const Size& size, const unsigned _maxCUSize,
-              const unsigned margin, const bool bDecoder, const int layerId, const bool enablePostFilteringForHFR);
-  void destroy();
+  void create( ChromaFormat _chromaFormat, const Size& size, unsigned _maxCUSize, unsigned _margin, bool _decoder );
+  void reset();
+  void destroy( bool bPicHeader );
 
-  void createTempBuffers( const unsigned _maxCUSize, bool useFilterFrame, bool resChange, bool decoder, bool isFgFiltered);
+  void linkSharedBuffers( PelStorage* origBuf, PelStorage* filteredBuf, PelStorage* prevOrigBufs[ NUM_QPA_PREV_FRAMES ], PicShared* picShared );
+  void releasePrevBuffers();
+  void releaseSharedBuffers();
+
+  void createTempBuffers( unsigned _maxCUSize );
   void destroyTempBuffers();
 
-  int                       m_padValue;
-  SEIFilmGrainSynthesizer*  m_grainCharacteristic;
-  PelStorage*               m_grainBuf;
-  void              createGrainSynthesizer(bool firstPictureInSequence, SEIFilmGrainSynthesizer* grainCharacteristics, PelStorage* grainBuf, int width, int height, ChromaFormat fmt, int bitDepth);
-  PelUnitBuf        getDisplayBufFG       (bool wrap = false);
+  void extendPicBorder();
+  void finalInit( const VPS& vps, const SPS& sps, const PPS& pps, PicHeader* picHeader, XUCache& unitCache, std::mutex* mutex, APS** alfAps, APS* lmcsAps );
+  void setSccFlags( const VVEncCfg* encCfg );
 
-  SEIColourTransformApply* m_colourTranfParams;
-  PelStorage*              m_invColourTransfBuf;
-  void              createColourTransfProcessor(bool firstPictureInSequence, SEIColourTransformApply* ctiCharacteristics, PelStorage* ctiBuf, int width, int height, ChromaFormat fmt, int bitDepth);
-  PelUnitBuf        getDisplayBuf();
+  int  getPOC()                                                     const { return poc; }
 
-  SEIMessages m_nnpfcActivated;
+  const PelStorage& getOrigBuffer()                                       { return *m_sharedBufs[       PIC_ORIGINAL]; }
+         PelUnitBuf getOrigBuf()                                          { return getSharedBuf(        PIC_ORIGINAL); }
+  const CPelUnitBuf getOrigBuf()                                    const { return getSharedBuf(        PIC_ORIGINAL); }
+  const CPelBuf     getOrigBuf(const ComponentID compID)            const { return getSharedBuf(compID, PIC_ORIGINAL); }
+  const CPelBuf     getOrigBuf(const CompArea& blk)                 const { return getSharedBuf(blk,    PIC_ORIGINAL); }
+  const CPelUnitBuf getOrigBuf(const UnitArea& unit)                const { return getSharedBuf(unit,   PIC_ORIGINAL); }
 
-  void copyToPic(const SPS *sps, PelStorage *pcPicYuvSrc, PelStorage *pcPicYuvDst);
-  Picture*  findPrevPicPOC(Picture* pcPic, PicList* pcListPic);
-  Picture*  findNextPicPOC(Picture* pcPic, PicList* pcListPic);
-  void  xOutputPostFilteredPic(Picture* pcPic, PicList* pcListPic, int blendingRatio);
-  void  xOutputPreFilteredPic(Picture* pcPic, PicList* pcListPic, int blendingRatio, int intraPeriod);
+         PelBuf     getRecoBuf(const ComponentID compID)                  { return getPicBuf(compID, PIC_RECONSTRUCTION); }
+  const CPelBuf     getRecoBuf(const ComponentID compID)            const { return getPicBuf(compID, PIC_RECONSTRUCTION); }
+         PelBuf     getRecoBuf(const CompArea& blk)                       { return getPicBuf(blk,    PIC_RECONSTRUCTION); }
+  const CPelBuf     getRecoBuf(const CompArea& blk)                 const { return getPicBuf(blk,    PIC_RECONSTRUCTION); }
+         PelUnitBuf getRecoBuf(const UnitArea& unit)                      { return getPicBuf(unit,   PIC_RECONSTRUCTION); }
+  const CPelUnitBuf getRecoBuf(const UnitArea& unit)                const { return getPicBuf(unit,   PIC_RECONSTRUCTION); }
+         PelUnitBuf getRecoBuf()                                          { return getPicBuf(        PIC_RECONSTRUCTION); }
+  const CPelUnitBuf getRecoBuf()                                    const { return getPicBuf(        PIC_RECONSTRUCTION); }
+         int        getRecoBufStride(const ComponentID compID)      const { return m_picBufs[PIC_RECONSTRUCTION].bufs[compID].stride; }
+  const  Pel*       getRecoBufPtr   (const ComponentID compID)      const { return m_picBufs[PIC_RECONSTRUCTION].bufs[compID].buf; }
 
-         PelBuf     getOrigBuf(const CompArea &blk);
-  const CPelBuf     getOrigBuf(const CompArea &blk) const;
-         PelUnitBuf getOrigBuf(const UnitArea &unit);
-  const CPelUnitBuf getOrigBuf(const UnitArea &unit) const;
-         PelUnitBuf getOrigBuf();
-  const CPelUnitBuf getOrigBuf() const;
-         PelBuf     getOrigBuf(const ComponentID compID);
-  const CPelBuf     getOrigBuf(const ComponentID compID) const;
-         PelBuf     getTrueOrigBuf(const ComponentID compID);
-  const CPelBuf     getTrueOrigBuf(const ComponentID compID) const;
-         PelUnitBuf getTrueOrigBuf();
-  const CPelUnitBuf getTrueOrigBuf() const;
-        PelBuf      getTrueOrigBuf(const CompArea &blk);
-  const CPelBuf     getTrueOrigBuf(const CompArea &blk) const;
+         PelUnitBuf getSaoBuf()                                           { return getPicBuf(        PIC_SAO_TEMP); }
+  const CPelUnitBuf getSaoBuf()                                     const { return getPicBuf(        PIC_SAO_TEMP); }
 
-         PelUnitBuf getFilteredOrigBuf();
-  const CPelUnitBuf getFilteredOrigBuf() const;
-         PelBuf     getFilteredOrigBuf(const CompArea &blk);
-  const CPelBuf     getFilteredOrigBuf(const CompArea &blk) const;
+        PelStorage& getFilteredOrigBuffer()                               { return *m_sharedBufs[       PIC_ORIGINAL_RSP]; }
+         PelUnitBuf getRspOrigBuf()                                       { return getSharedBuf(        PIC_ORIGINAL_RSP); }
+  const CPelUnitBuf getRspOrigBuf()                                 const { return getSharedBuf(        PIC_ORIGINAL_RSP); }
+  const CPelBuf     getRspOrigBuf(const ComponentID compID)         const { return getSharedBuf(compID, PIC_ORIGINAL_RSP); }
+  const CPelBuf     getRspOrigBuf(const CompArea& blk)              const { return getSharedBuf(blk,    PIC_ORIGINAL_RSP); }
+  const CPelUnitBuf getRspOrigBuf(const UnitArea& unit)             const { return getSharedBuf(unit,   PIC_ORIGINAL_RSP); }
 
-         PelBuf     getPredBuf(const CompArea &blk);
-  const CPelBuf     getPredBuf(const CompArea &blk) const;
-         PelUnitBuf getPredBuf(const UnitArea &unit);
-  const CPelUnitBuf getPredBuf(const UnitArea &unit) const;
-
-         PelBuf     getResiBuf(const CompArea &blk);
-  const CPelBuf     getResiBuf(const CompArea &blk) const;
-         PelUnitBuf getResiBuf(const UnitArea &unit);
-  const CPelUnitBuf getResiBuf(const UnitArea &unit) const;
-
-         PelBuf     getRecoBuf(const ComponentID compID, bool wrap=false);
-  const CPelBuf     getRecoBuf(const ComponentID compID, bool wrap=false) const;
-         PelBuf     getRecoBuf(const CompArea &blk, bool wrap=false);
-  const CPelBuf     getRecoBuf(const CompArea &blk, bool wrap=false) const;
-         PelUnitBuf getRecoBuf(const UnitArea &unit, bool wrap=false);
-  const CPelUnitBuf getRecoBuf(const UnitArea &unit, bool wrap=false) const;
-         PelUnitBuf getRecoBuf(bool wrap=false);
-  const CPelUnitBuf getRecoBuf(bool wrap=false) const;
-
-         PelBuf     getBuf(const ComponentID compID, const PictureType &type);
-  const CPelBuf     getBuf(const ComponentID compID, const PictureType &type) const;
-         PelBuf     getBuf(const CompArea &blk,      const PictureType &type);
-  const CPelBuf     getBuf(const CompArea &blk,      const PictureType &type) const;
-         PelUnitBuf getBuf(const UnitArea &unit,     const PictureType &type);
-  const CPelUnitBuf getBuf(const UnitArea &unit,     const PictureType &type) const;
-
-        PelUnitBuf getPostRecBuf();
-  const CPelUnitBuf getPostRecBuf() const;
-
-  void extendPicBorder(const SPS* sps, const PPS* pps);
-  void extendWrapBorder( const PPS *pps );
-  void finalInit( const VPS* vps, const SPS& sps, const PPS& pps, PicHeader *picHeader, APS** alfApss, APS* lmcsAps, APS* scalingListAps );
-
-  int  getPOC()                               const { return poc; }
-  int  getDecodingOrderNumber()               const { return m_decodingOrderNumber; }
-  void setDecodingOrderNumber(const int val)        { m_decodingOrderNumber = val;  }
-  NalUnitType getPictureType()                const { return m_pictureType;         }
-  void setPictureType(const NalUnitType val)        { m_pictureType = val;          }
-  void        setBorderExtension(bool flag)
-  {
-    m_extendedBorder = flag;
-  }
-  Pel* getOrigin( const PictureType &type, const ComponentID compID ) const;
-  int  getEdrapRapId()                        const { return edrapRapId ; }
-  void setEdrapRapId(const int val)                 { edrapRapId = val; }
-
-  void setLossyQPValue(int i)                 { m_lossyQP = i; }
-  int getLossyQPValue()                       const { return m_lossyQP; }
-  void      fillSliceLossyLosslessArray(std::vector<uint16_t> sliceLosslessArray, bool mixedLossyLossless);
-  bool      losslessSlice(uint32_t sliceIdx)  const { return m_lossylosslessSliceArray[sliceIdx]; }
-
-  int           getSpliceIdx(uint32_t idx) const { return m_spliceIdx[idx]; }
-  void          setSpliceIdx(uint32_t idx, int poc) { m_spliceIdx[idx] = poc; }
-  void          createSpliceIdx(int nums);
-  bool          getSpliceFull();
-  static void   sampleRateConv(const ScalingRatio scalingRatio, int scaleX, int scaleY, const CPelBuf &beforeScale,
-                               const int beforeScaleLeftOffset, const int beforeScaleTopOffset, const PelBuf &afterScale,
-                               const int afterScaleLeftOffset, const int afterScaleTopOffset, const int bitDepth,
-                               const bool useLumaFilter, const bool downsampling,
-                              const bool horCollocatedPositionFlag, const bool verCollocatedPositionFlag,
-                              const bool rescaleForDisplay, const int upscaleFilterForDisplay
-  );
-
-  static void rescalePicture(const ScalingRatio scalingRatio, const CPelUnitBuf& beforeScaling,
-                             const Window& scalingWindowBefore, const PelUnitBuf& afterScaling,
-                             const Window& scalingWindowAfter, const ChromaFormat chromaFormatIdc,
-                             const BitDepths& bitDepths, const bool useLumaFilter, const bool downsampling,
-                             const bool horCollocatedChromaFlag, const bool verCollocatedChromaFlag,
-                             bool rescaleForDisplay = false, int upscaleFilterForDisplay = 0);
+  const CPelBuf     getOrigBufPrev(const CompArea &blk, const PrevFrameType type) const;
+  const CPelUnitBuf getOrigBufPrev(const PrevFrameType type) const;
+  const CPelBuf     getOrigBufPrev(const ComponentID compID, const PrevFrameType type) const;
 
 private:
-  Window        m_conformanceWindow;
-  Window        m_scalingWindow;
-  int           m_decodingOrderNumber;
-  NalUnitType   m_pictureType;
-#if GREEN_METADATA_SEI_ENABLED
-  FeatureCounterStruct m_featureCounter;
-#endif
-public:
-  bool m_isSubPicBorderSaved;
+         PelUnitBuf getPicBuf(                          const PictureType type)         { return m_picBufs[ type ]; }
+  const CPelUnitBuf getPicBuf(                          const PictureType type)   const { return m_picBufs[ type ]; }
+         PelBuf     getPicBuf(const ComponentID compID, const PictureType type)         { return m_picBufs[ type ].getBuf( compID ); }
+  const CPelBuf     getPicBuf(const ComponentID compID, const PictureType type)   const { return m_picBufs[ type ].getBuf( compID ); }
+         PelBuf     getPicBuf(const CompArea& blk,      const PictureType type)         { return ( !blk.valid() ) ? PelBuf() : m_picBufs[ type ].getBuf( blk ); }
+  const CPelBuf     getPicBuf(const CompArea& blk,      const PictureType type)   const { return ( !blk.valid() ) ? PelBuf() : m_picBufs[ type ].getBuf( blk ); }
+         PelUnitBuf getPicBuf(const UnitArea& unit,     const PictureType type);
+  const CPelUnitBuf getPicBuf(const UnitArea& unit,     const PictureType type) const;
 
-  PelStorage m_bufSubPicAbove;
-  PelStorage m_bufSubPicBelow;
-  PelStorage m_bufSubPicLeft;
-  PelStorage m_bufSubPicRight;
-
-  PelStorage m_bufWrapSubPicAbove;
-  PelStorage m_bufWrapSubPicBelow;
-
-  void    saveSubPicBorder(int POC, int subPicX0, int subPicY0, int subPicWidth, int subPicHeight);
-  void  extendSubPicBorder(int POC, int subPicX0, int subPicY0, int subPicWidth, int subPicHeight);
-  void restoreSubPicBorder(int POC, int subPicX0, int subPicY0, int subPicWidth, int subPicHeight);
-#if GREEN_METADATA_SEI_ENABLED
-  void setFeatureCounter (FeatureCounterStruct b ) { m_featureCounter = b;}
-  FeatureCounterStruct getFeatureCounter (){return m_featureCounter;}
-#endif
-  
-  bool getSubPicSaved()          { return m_isSubPicBorderSaved; }
-  void setSubPicSaved(bool bVal) { m_isSubPicBorderSaved = bVal; }
-  bool     m_extendedBorder;
-  bool m_wrapAroundValid;
-  unsigned m_wrapAroundOffset;
-  bool referenced;
-  bool reconstructed;
-  bool neededForOutput;
-  bool usedByCurr;
-  bool longTerm;
-  bool topField;
-  bool fieldPic;
-  EnumArray<int, ChannelType> m_prevQP;
-  bool precedingDRAP; // preceding a DRAP picture in decoding order
-  int  edrapRapId;
-  bool nonReferencePictureFlag;
-
-  int  poc;
-  uint32_t temporalId;
-  int      layerId;
-  std::vector<SubPic> subPictures;
-  int numSlices;
-  std::vector<int> sliceSubpicIdx;
-
-  bool subLayerNonReferencePictureDueToSTSA;
-
-  int* m_spliceIdx;
-  int  m_ctuNums;
-  int m_lossyQP;
-  std::vector<bool> m_lossylosslessSliceArray;
-  bool interLayerRefPicFlag;
-  bool mixedNaluTypesInPicFlag;
-  bool isEosPresentInPic;
-
-  PelStorage m_bufs[NUM_PIC_TYPES];
-  const Picture*           unscaledPic;
-
-  Hash               m_hashMap;
-  Hash              *getHashMap() { return &m_hashMap; }
-  const Hash        *getHashMap() const { return &m_hashMap; }
-  void               addPictureToHashMapForInter();
-
-  CodingStructure*   cs;
-#if GDR_ENABLED
-  GdrPicParam        gdrParam;
-#endif
-  std::deque<Slice*> slices;
-  SEIMessages        SEIs;
-
-  uint32_t           getPicWidthInLumaSamples() const                                { return  getRecoBuf( COMPONENT_Y ).width; }
-  uint32_t           getPicHeightInLumaSamples() const                               { return  getRecoBuf( COMPONENT_Y ).height; }
-  Window&            getConformanceWindow()                                          { return  m_conformanceWindow; }
-  const Window&      getConformanceWindow() const                                    { return  m_conformanceWindow; }
-  Window&            getScalingWindow()                                              { return  m_scalingWindow; }
-  const Window&      getScalingWindow()                                        const { return  m_scalingWindow; }
-
-  bool isRefScaled(const SPS* sps, const PPS* pps) const
-  {
-    return unscaledPic->getPicWidthInLumaSamples() != pps->getPicWidthInLumaSamples()
-           || unscaledPic->getPicHeightInLumaSamples() != pps->getPicHeightInLumaSamples()
-           || unscaledPic->getScalingWindow() != pps->getScalingWindow()
-           || unscaledPic->cs->sps->getNumSubPics() != sps->getNumSubPics()
-           ;
-  }
-
-  bool               isWrapAroundEnabled(const SPS* sps, const PPS* pps ) const                     { return  pps->getWrapAroundEnabledFlag() && !isRefScaled( sps, pps ); }
-
-  void         allocateNewSlice();
-  Slice        *swapSliceObject(Slice * p, uint32_t i);
-  void         clearSliceBuffer();
-
-  MCTSInfo     mctsInfo;
-  std::vector<AQpLayer*> aqlayer;
-
-  ChromaFormat m_chromaFormatIdc;
-  BitDepths    m_bitDepths;
-
-#if !KEEP_PRED_AND_RESI_SIGNALS
-private:
-  UnitArea m_ctuArea;
-#endif
-
-  std::vector<AlfMode> m_alfModes[MAX_NUM_COMPONENT];
-
-  std::vector<SAOBlkParam> m_sao[2];
+         PelUnitBuf getSharedBuf(                          const PictureType type)         { return *m_sharedBufs[ type ]; }
+  const CPelUnitBuf getSharedBuf(                          const PictureType type)   const { return *m_sharedBufs[ type ]; }
+         PelBuf     getSharedBuf(const ComponentID compID, const PictureType type)         { return  m_sharedBufs[ type ]->getBuf( compID ); }
+  const CPelBuf     getSharedBuf(const ComponentID compID, const PictureType type)   const { return  m_sharedBufs[ type ]->getBuf( compID ); }
+         PelBuf     getSharedBuf(const CompArea& blk,      const PictureType type)         { return ( !blk.valid() ) ? PelBuf() : m_sharedBufs[ type ]->getBuf( blk ); }
+  const CPelBuf     getSharedBuf(const CompArea& blk,      const PictureType type)   const { return ( !blk.valid() ) ? PelBuf() : m_sharedBufs[ type ]->getBuf( blk ); }
+         PelUnitBuf getSharedBuf(const UnitArea& unit,     const PictureType type);
+  const CPelUnitBuf getSharedBuf(const UnitArea& unit,     const PictureType type) const;
 
 public:
-  SAOBlkParam    *getSAO(int id = 0)                        { return &m_sao[id][0]; };
-  void            resizeSAO(unsigned numEntries, int dstid) { m_sao[dstid].resize(numEntries); }
-  void            copySAO(const Picture& src, int dstid)    { std::copy(src.m_sao[0].begin(), src.m_sao[0].end(), m_sao[dstid].begin()); }
+  CodingStructure*              cs;
+  const VPS*                    vps;
+  const DCI*                    dci;
+  ParameterSetMap<APS>          picApsMap;
+  std::deque<Slice*>            slices;
+  std::vector<const Slice*>     ctuSlice;
+  ReshapeData                   reshapeData;
+  SEIMessages                   SEIs;
+  BlkStat                       picBlkStat;
+  std::vector<OutputBitstream>  sliceDataStreams;
 
-#if ENABLE_QPA
-  std::vector<double>     m_uEnerHpCtu;                         ///< CTU-wise L2 or squared L1 norm of high-passed luma input
-  std::vector<Pel>        m_iOffsetCtu;                         ///< CTU-wise DC offset (later QP index offset) of luma input
-#if ENABLE_QPA_SUB_CTU
-  std::vector<int8_t>     m_subCtuQP;                           ///< sub-CTU-wise adapted QPs for delta-QP depth of 1 or more
-#endif
-#endif
+  bool                          isInitDone;
+  std::atomic_bool              isReconstructed;
+  bool                          isBorderExtended;
+  bool                          isReferenced;
+  bool                          isNeededForOutput;
+  bool                          isFinished;
+  bool                          isLongTerm;
+  bool                          isFlush;
+  bool                          isInProcessList;
+  bool                          precedingDRAP; // preceding a DRAP picture in decoding order
 
-  void copyAlfData(const Picture &p);
-  void resizeAlfData(int numEntries);
+  const GOPEntry*               gopEntry;
 
-  AlfMode *getAlfModes(int compIdx) { return m_alfModes[compIdx].data(); }
+  int                           refCounter;
+  int                           poc;
+  unsigned                      TLayer;
+  int                           layerId;
+  bool                          isSubPicBorderSaved;
+  int                           sliceDataNumBins;
+  uint64_t                      cts;
+  bool                          ctsValid;
+  int64_t                       picsInMissing;      // summed up missing frames on input
+  int64_t                       picOutOffset;       // signalization of pic offset to re-calc dts
+  bool                          isPreAnalysis;
+
+  PicShared*                    m_picShared;
+
+  PelStorage                    m_picBufs[ NUM_PIC_TYPES ];
+  PelStorage*                   m_sharedBufs[ NUM_PIC_TYPES ];
+  PelStorage*                   m_bufsOrigPrev[ NUM_QPA_PREV_FRAMES ];
+
+  std::vector<double>           ctuQpaLambda;
+  std::vector<int>              ctuAdaptedQP;
+  int                           gopAdaptedQP; // QP offset of GOP (delta relative to base QP)
+  bool                          force2ndOrder; // force 2nd-order high-pass in activity calc.
+  bool                          isSceneCutGOP;
+  bool                          isSceneCutCheckAdjQP;
+  bool                          isMeanQPLimited;
+  std::mutex                    wppMutex;
+  int                           picInitialQP;
+  double                        picInitialLambda;
+  int16_t                       picMemorySTA;
+  PicVisAct                     picVA;
+  double                        psnr[MAX_NUM_COMP];
+  double                        mse [MAX_NUM_COMP];
+
+  StopClock                     encTime;
+  bool                          isSccWeak;
+  bool                          isSccStrong;
+  bool                          useME;
+  bool                          useMCTF;
+  bool                          useTS;
+  bool                          useBDPCM;
+  bool                          useIBC;
+  bool                          useLMCS;
+  bool                          useSAO;
+  bool                          useNumRefs;
+  bool                          useSelectiveRdoq;
+  int                           useFastMrg;
+  int                           useQtbttSpeedUpMode;
+  int                           actualHeadBits;
+  int                           actualTotalBits;
+  EncRCPic*                     encRCPic;
+  PicApsGlobal*                 picApsGlobal;
+  PicApsGlobal*                 refApsGlobal;
+
+  std::vector<SAOBlkParam>      m_sao[ 2 ];
+  std::vector<uint8_t>          m_alfCtuEnabled[ MAX_NUM_COMP ];
+  std::vector<short>            m_alfCtbFilterIndex;
+  std::vector<uint8_t>          m_alfCtuAlternative[ MAX_NUM_COMP ];
+  std::vector<std::atomic<int>>*  m_tileColsDone = nullptr;
+
+  void*                         userData;
+
+public:
+  Slice*          allocateNewSlice();
+  Slice*          swapSliceObject( Slice* p, uint32_t i );
+
+  SAOBlkParam    *getSAO    (int id = 0)                     { return &m_sao[id][0]; };
+  void            resizeSAO (unsigned numEntries, int dstid) { m_sao[dstid].resize(numEntries); }
+  void            copySAO   (const Picture& src, int dstid)  { std::copy(src.m_sao[0].begin(), src.m_sao[0].end(), m_sao[dstid].begin()); }
+
+  void            resizeAlfCtuBuffers( int numEntries );
 };
 
-int calcAndPrintHashStatus(const CPelUnitBuf& pic, const class SEIDecodedPictureHash* pictureHashSEI, const BitDepths &bitDepths, const MsgLevel msgl);
-
-uint32_t calcMD5(const CPelUnitBuf& pic, PictureHash &digest, const BitDepths &bitDepths);
-uint32_t calcMD5WithCropping(const CPelUnitBuf &pic, PictureHash &digest, const BitDepths &bitDepths,
-                             const int leftOffset, const int rightOffset, const int topOffset, const int bottomOffset);
-
-std::string hashToString(const PictureHash &digest, int numChar);
+int calcAndPrintHashStatus(const CPelUnitBuf& pic, const SEIDecodedPictureHash* pictureHashSEI, const BitDepths &bitDepths, const vvencMsgLevel msgl, MsgLog& logger );
 
 typedef std::list<Picture*> PicList;
 
-#endif
+} // namespace vvenc
+
+//! \}
+

@@ -1,44 +1,54 @@
-/* The copyright in this software is being made available under the BSD
-* License, included below. This software may be subject to other third party
-* and contributor rights, including patent rights, and no such rights are
-* granted under this license.
-*
-* Copyright (c) 2010-2025, ITU/ISO/IEC
-* All rights reserved.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*  * Redistributions of source code must retain the above copyright notice,
-*    this list of conditions and the following disclaimer.
-*  * Redistributions in binary form must reproduce the above copyright notice,
-*    this list of conditions and the following disclaimer in the documentation
-*    and/or other materials provided with the distribution.
-*  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
-*    be used to endorse or promote products derived from this software without
-*    specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
-* BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-* THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
+
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
 
 
+------------------------------------------------------------------------------------------- */
 #pragma once
 
 #include "CommonLib/Contexts.h"
 #include "CommonLib/BitStream.h"
 #include "CommonLib/dtrace_next.h"
 
+//! \ingroup EncoderLib
+//! \{
 
+namespace vvenc {
 
 class BinStore
 {
@@ -141,20 +151,19 @@ public:
   ~BinCounter() {}
 public:
   void      reset   ();
-  void      addCtx(unsigned ctxId) { m_numBinsCtx[ctxId]++; }
-  void      addEP(unsigned num) { m_numBinsEP += num; }
-  void      addEP() { m_numBinsEP++; }
-  void      addTrm() { m_numBinsTrm++; }
+  void      addCtx  ( unsigned ctxId )          { m_NumBinsCtx[ctxId]++; }
+  void      addEP   ( unsigned num   )          { m_NumBinsEP+=num; }
+  void      addEP   ()                          { m_NumBinsEP++; }
+  void      addTrm  ()                          { m_NumBinsTrm++; }
   uint32_t  getAll  ()                  const;
-  uint32_t  getCtx(unsigned ctxId) const { return m_numBinsCtx[ctxId]; }
-  uint32_t  getEP() const { return m_numBinsEP; }
-  uint32_t  getTrm() const { return m_numBinsTrm; }
-
+  uint32_t  getCtx  ( unsigned ctxId )  const   { return m_NumBinsCtx[ctxId]; }
+  uint32_t  getEP   ()                  const   { return m_NumBinsEP; }
+  uint32_t  getTrm  ()                  const   { return m_NumBinsTrm; }
 private:
-  std::vector<uint32_t> m_ctxBinsCodedBuffer;
-  uint32_t             *m_numBinsCtx;
-  uint32_t              m_numBinsEP;
-  uint32_t              m_numBinsTrm;
+  std::vector<uint32_t> m_CtxBinsCodedBuffer;
+  uint32_t*             m_NumBinsCtx;
+  uint32_t              m_NumBinsEP;
+  uint32_t              m_NumBinsTrm;
 };
 
 
@@ -162,7 +171,6 @@ private:
 class BinEncoderBase : public BinEncIf, public BinCounter
 {
 protected:
-  template <class BinProbModel>
   BinEncoderBase ( const BinProbModel* dummy );
 public:
   ~BinEncoderBase() {}
@@ -173,12 +181,11 @@ public:
   void      finish  ();
   void      restart ();
   void      reset   ( int qp, int initId );
-  void      riceStatReset(int bitDepth, bool persistentRiceAdaptationEnabledFlag);
-public:
+
   void      resetBits           ();
   uint64_t  getEstFracBits      ()                    const { THROW( "not supported" ); return 0; }
   unsigned  getNumBins          ( unsigned ctxId )    const { return BinCounter::getCtx(ctxId); }
-public:
+
   void      encodeBinEP         ( unsigned bin                      );
   void      encodeBinsEP        ( unsigned bins,  unsigned numBins  );
   void      encodeRemAbsEP      ( unsigned bins,
@@ -187,42 +194,37 @@ public:
                                   int      maxLog2TrDynamicRange    );
   void      encodeBinTrm        ( unsigned bin                      );
   void      align               ();
-  unsigned  getNumWrittenBits()
-  {
-    return (m_bitstream->getNumberOfWrittenBits() + 8 * m_numBufferedBytes + 23 - m_bitsLeft);
-  }
+  unsigned  getNumWrittenBits   () { return ( m_Bitstream->getNumberOfWrittenBits() + 8 * m_numBufferedBytes + 23 - m_bitsLeft ); }
 
-public:
   uint32_t  getNumBins          ()                          { return BinCounter::getAll(); }
   bool      isEncoding          ()                          { return true; }
 protected:
   void      encodeAlignedBinsEP ( unsigned bins,  unsigned numBins  );
   void      writeOut            ();
 protected:
-  OutputBitstream        *m_bitstream;
-  uint32_t                m_low;
-  uint32_t                m_range;
-  uint32_t                m_bufferedByte;
-  int32_t                 m_numBufferedBytes;
-  int32_t                 m_bitsLeft;
-  BinStore                m_binStore;
+  OutputBitstream* m_Bitstream;
+  uint32_t         m_Low;
+  uint32_t         m_Range;
+  uint32_t         m_bufferedByte;
+  int32_t          m_numBufferedBytes;
+  int32_t          m_bitsLeft;
+  BinStore         m_BinStore;
 };
 
 
 
-template <class BinProbModel>
-class TBinEncoder : public BinEncoderBase
+class BinEncoder : public BinEncoderBase
 {
 public:
-  TBinEncoder ();
-  ~TBinEncoder() {}
+  BinEncoder ();
+  ~BinEncoder() {}
   void  encodeBin   ( unsigned bin, unsigned ctxId );
 public:
-  void            setBinStorage(bool b) { m_binStore.setUse(b); }
-  const BinStore *getBinStore() const { return &m_binStore; }
+  void            setBinStorage     ( bool b )          { m_BinStore.setUse(b); }
+  const BinStore* getBinStore       ()          const   { return &m_BinStore; }
   BinEncIf*       getTestBinEncoder ()          const;
 private:
-  CtxStore<BinProbModel> &m_ctx;
+  CtxStore& m_Ctx;
 };
 
 
@@ -232,30 +234,24 @@ private:
 class BitEstimatorBase : public BinEncIf
 {
 protected:
-  template <class BinProbModel>
   BitEstimatorBase ( const BinProbModel* dummy );
 public:
   ~BitEstimatorBase() {}
 public:
   void      init                ( OutputBitstream* bitstream )        {}
   void      uninit              ()                                    {}
-  void      start() { m_estFracBits = 0; }
+  void      start               ()                                    { m_EstFracBits = 0; }
   void      finish              ()                                    {}
-  void      restart() { m_estFracBits = (m_estFracBits >> SCALE_BITS) << SCALE_BITS; }
-  void      reset(int qp, int initId)
-  {
-    Ctx::init(qp, initId);
-    m_estFracBits = 0;
-  }
-
+  void      restart             ()                                    { m_EstFracBits = (m_EstFracBits >> SCALE_BITS) << SCALE_BITS; }
+  void      reset               ( int qp, int initId )                { Ctx::init( qp, initId ); m_EstFracBits = 0;}
 public:
-  void resetBits() { m_estFracBits = 0; }
+  void      resetBits           ()                                    { m_EstFracBits = 0; }
 
-  uint64_t  getEstFracBits() const { return m_estFracBits; }
+  uint64_t  getEstFracBits      ()                              const { return m_EstFracBits; }
   unsigned  getNumBins          ( unsigned ctxId )              const { THROW( "not supported for BitEstimator" ); return 0; }
 public:
-  void      encodeBinEP(unsigned bin) { m_estFracBits += BinProbModelBase::estFracBitsEP(); }
-  void      encodeBinsEP(unsigned bins, unsigned numBins) { m_estFracBits += BinProbModelBase::estFracBitsEP(numBins); }
+  void      encodeBinEP         ( unsigned bin                      ) { m_EstFracBits += BinProbModelBase::estFracBitsEP (); }
+  void      encodeBinsEP        ( unsigned bins,  unsigned numBins  ) { m_EstFracBits += BinProbModelBase::estFracBitsEP ( numBins ); }
   void      encodeRemAbsEP      ( unsigned bins,
                                   unsigned goRicePar,
                                   unsigned cutoff,
@@ -264,37 +260,29 @@ public:
 public:
   uint32_t  getNumBins          ()                                      { THROW("Not supported"); return 0; }
   bool      isEncoding          ()                                      { return false; }
-  unsigned  getNumWrittenBits()
-  {
-    // THROW( "Not supported" );
-    return (uint32_t) 0 /*(m_estFracBits >> SCALE_BITS)*/;
-  }
+  unsigned  getNumWrittenBits   ()                                      { /*THROW( "Not supported" );*/ return (uint32_t)( 0/*m_EstFracBits*//* >> SCALE_BITS*/ ); }
 
 protected:
-  uint64_t m_estFracBits;
+  uint64_t                m_EstFracBits;
 };
 
 
 
-template <class BinProbModel>
-class TBitEstimator : public BitEstimatorBase
+class BitEstimator : public BitEstimatorBase
 {
 public:
-  TBitEstimator ();
-  ~TBitEstimator() {}
-  void            encodeBin(unsigned bin, unsigned ctxId) { m_ctx[ctxId].estFracBitsUpdate(bin, m_estFracBits); }
-  void            encodeBinTrm(unsigned bin) { m_estFracBits += BinProbModel::estFracBitsTrm(bin); }
+  BitEstimator ();
+  ~BitEstimator() {}
+  void encodeBin    ( unsigned bin, unsigned ctxId )  { m_Ctx[ctxId].estFracBitsUpdate( bin, m_EstFracBits ); }
+  void encodeBinTrm ( unsigned bin )                  { m_EstFracBits += BinProbModel::estFracBitsTrm( bin ); }
   void            setBinStorage     ( bool b )        {}
   const BinStore* getBinStore       ()          const { return 0; }
   BinEncIf*       getTestBinEncoder ()          const { return 0; }
 private:
-  CtxStore<BinProbModel> &m_ctx;
+  CtxStore& m_Ctx;
 };
 
+} // namespace vvenc
 
-
-typedef TBinEncoder  <BinProbModel_Std>   BinEncoder_Std;
-
-typedef TBitEstimator<BinProbModel_Std>   BitEstimator_Std;
-
+//! \}
 

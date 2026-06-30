@@ -1,1092 +1,336 @@
-/* The copyright in this software is being made available under the BSD
-* License, included below. This software may be subject to other third party
-* and contributor rights, including patent rights, and no such rights are
-* granted under this license.
-*
-* Copyright (c) 2010-2025, ITU/ISO/IEC
-* All rights reserved.
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*  * Redistributions of source code must retain the above copyright notice,
-*    this list of conditions and the following disclaimer.
-*  * Redistributions in binary form must reproduce the above copyright notice,
-*    this list of conditions and the following disclaimer in the documentation
-*    and/or other materials provided with the distribution.
-*  * Neither the name of the ITU/ISO/IEC nor the names of its contributors may
-*    be used to endorse or promote products derived from this software without
-*    specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
-* BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-* THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/* -----------------------------------------------------------------------------
+The copyright in this software is being made available under the Clear BSD
+License, included below. No patent rights, trademark rights and/or 
+other Intellectual Property Rights other than the copyrights concerning 
+the Software are granted under this license.
+
+The Clear BSD License
+
+Copyright (c) 2019-2026, Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. & The VVenC Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted (subject to the limitations in the disclaimer below) provided that
+the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+------------------------------------------------------------------------------------------- */
+
 
 /** \file     CodingStructure.h
  *  \brief    A class managing the coding information for a specific image part
  */
 
 #include "CodingStructure.h"
-
 #include "Unit.h"
 #include "Slice.h"
 #include "Picture.h"
 #include "UnitTools.h"
 #include "UnitPartitioner.h"
 
-XuPool g_xuPool = XuPool();
+//! \ingroup CommonLib
+//! \{
+
+namespace vvenc {
 
 // ---------------------------------------------------------------------------
 // coding structure method definitions
 // ---------------------------------------------------------------------------
 
-CodingStructure::CodingStructure(XuPool &xuPool)
-  : area()
-  , picture(nullptr)
-  , parent(nullptr)
-  , bestCS(nullptr)
-  , m_isTuEnc(false)
-  , m_cuPool(xuPool.cuPool)
-  , m_puPool(xuPool.puPool)
-  , m_tuPool(xuPool.tuPool)
-  , bestParent(nullptr)
-  , tmpColorSpaceCost(MAX_DOUBLE)
-  , firstColorSpaceSelected(true)
-  , resetIBCBuffer(false)
+CodingStructure::CodingStructure( XUCache& unitCache, std::mutex* mutex )
+  : area            ()
+  , picture         ( nullptr )
+  , parent          ( nullptr )
+  , lumaCS          ( nullptr )
+  , picHeader       ( nullptr )
+  , m_isTuEnc       ( false )
+  , m_cuCache       ( unitCache.cuCache )
+  , m_tuCache       ( unitCache.tuCache )
+  , m_unitCacheMutex( mutex )
+  , bestParent      ( nullptr )
+  , resetIBCBuffer  ( false )
 {
-  for( uint32_t i = 0; i < MAX_NUM_COMPONENT; i++ )
+  for( uint32_t i = 0; i < MAX_NUM_COMP; i++ )
   {
+    m_coeffs[ i ] = nullptr;
     m_offsets[ i ] = 0;
   }
 
-  m_cuIdx.fill(nullptr);
-  m_puIdx.fill(nullptr);
-  m_tuIdx.fill(nullptr);
-  m_isDecomp.fill(nullptr);
+  for( uint32_t i = 0; i < MAX_NUM_CH; i++ )
+  {
+    m_cuPtr   [ i ] = nullptr;
+  }
 
-  m_motionBuf     = nullptr;
-  picHeader = nullptr;
+  for( int i = 0; i < NUM_EDGE_DIR; i++ )
+  {
+    m_lfParam [ i ] = nullptr;
+  }
 
-  features.resize( NUM_ENC_FEATURES );
-  treeType = TREE_D;
-  modeType = MODE_TYPE_ALL;
-  tmpColorSpaceIntraCost[0] = MAX_DOUBLE;
-  tmpColorSpaceIntraCost[1] = MAX_DOUBLE;
-  firstColorSpaceTestOnly = false;
+  m_motionBuf = nullptr;
+
+  m_numTUs = m_numCUs = 0;
 }
 
 void CodingStructure::destroy()
 {
   picture   = nullptr;
   parent    = nullptr;
+  lumaCS     = nullptr;
 
   m_pred.destroy();
   m_resi.destroy();
   m_reco.destroy();
-  m_orgr.destroy();
+  m_rspreco.destroy();
+  m_org = nullptr;
+  m_rsporg = nullptr;
 
-  destroyTemporaryCsData();
-
+  destroyCoeffs();
   delete[] m_motionBuf;
   m_motionBuf = nullptr;
-}
 
-void CodingStructure::destroyTemporaryCsData()
-{
-  destroyCoeffs();
+  destroyTempBuffers();
 
-  for (auto &ptr : m_isDecomp)
-  {
-    delete[] ptr;
-    ptr = nullptr;
-  }
+  if ( m_unitCacheMutex ) m_unitCacheMutex->lock();
 
-  for (auto &ptr : m_tuIdx)
-  {
-    delete[] ptr;
-    ptr = nullptr;
-  }
+  m_tuCache.cache( tus );
+  m_cuCache.cache( cus );
 
-  for (auto &ptr : m_puIdx)
-  {
-    delete[] ptr;
-    ptr = nullptr;
-  }
-
-  for (auto &ptr : m_cuIdx)
-  {
-    delete[] ptr;
-    ptr = nullptr;
-  }
-
-  m_tuPool.giveBack(tus);
-  m_puPool.giveBack(pus);
-  m_cuPool.giveBack(cus);
-  m_numTUs = 0;
-  m_numPUs = 0;
-  m_numCUs = 0;
-}
-
-void CodingStructure::createTemporaryCsData(bool isPLTused)
-{
-  createCoeffs(isPLTused);
-
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
-  {
-    unsigned _area = unitScale[getFirstComponentOfChannel(chType)].scale(area.block(chType).size()).area();
-
-    m_cuIdx[chType] = _area > 0 ? new unsigned[_area] : nullptr;
-    m_puIdx[chType] = _area > 0 ? new unsigned[_area] : nullptr;
-    m_tuIdx[chType] = _area > 0 ? new unsigned[_area] : nullptr;
-    m_isDecomp[chType] = _area > 0 ? new bool[_area] : nullptr;
-  }
+  if ( m_unitCacheMutex ) m_unitCacheMutex->unlock();
 }
 
 void CodingStructure::releaseIntermediateData()
 {
   clearTUs();
-  clearPUs();
   clearCUs();
 }
 
-#if GDR_ENABLED
-bool CodingStructure::containRefresh(const int begX, const int endX) const
+CodingUnit* CodingStructure::getLumaCU( const Position& pos )
 {
-  if (begX == endX)
-  {
-    return false;
-  }
-
-  const Area csArea      = area.Y();
-  const Area refreshArea = Area(begX, area.ly(), endX - begX, std::min(slice->getPPS()->getPicHeightInLumaSamples(), area.lheight()));
-
-  return csArea.contains(refreshArea);
-}
-
-bool CodingStructure::overlapRefresh(const int begX, const int endX) const
-{
-  if (begX == endX)
-  {
-    return false;
-  }
-
-  const Area csArea = area.Y();
-  const Area refreshArea = Area(begX, area.ly(), endX - begX, area.lheight());
-
-  return csArea.overlaps(refreshArea);
-}
-
-bool CodingStructure::overlapRefresh() const
-{
-  const int  csX     = area.lx();
-  const int  csWidth = area.lwidth();
-
-  return overlapRefresh(csX, csX + csWidth);
-}
-
-bool CodingStructure::withinRefresh(const int begX, const int endX) const
-{
-  if (begX == endX)
-  {
-    return false;
-  }
-
-  const Area csArea = area.Y();
-  const Area refreshArea = Area(begX, area.ly(), endX - begX, area.lheight());
-
-  return refreshArea.contains(csArea);
-}
-
-bool CodingStructure::refreshCrossTTV(const int begX, const int endX) const
-{
-  const int  csX = area.lx();
-  const int  csY = area.ly();
-  const int  csWidth  = area.lwidth();
-  const int  csHeight = area.lheight();
-
-  const Area refreshArea = Area(begX, csY, endX - begX, csHeight);
-
-  const Area csArea0 = Area(csX,                                   csY, csWidth >> 2, csHeight);
-  const Area csArea1 = Area(csX + (csWidth >> 2),                  csY, csWidth >> 1, csHeight);
-  const Area csArea2 = Area(csX + (csWidth >> 2) + (csWidth >> 1), csY, csWidth >> 2, csHeight);
-
-  const bool overlap0 = csArea0.overlaps(refreshArea);
-  const bool overlap1 = csArea1.overlaps(refreshArea);
-  const bool overlap2 = csArea2.overlaps(refreshArea);
-
-  return overlap0 || overlap1 || overlap2;
-}
-
-bool CodingStructure::refreshCrossBTV(const int begX, const int endX) const
-{
-  const int  csX = area.lx();
-  const int  csY = area.ly();
-  const int  csWidth = area.lwidth();
-  const int  csHeight = area.lheight();
-
-  const Area refreshArea = Area(begX, csY, endX - begX, csHeight);
-
-  const Area csArea0 = Area(csX,                  csY, (csWidth >> 1), csHeight);
-  const Area csArea1 = Area(csX + (csWidth >> 1), csY, (csWidth >> 1), csHeight);
-
-  const bool overlap0 = csArea0.overlaps(refreshArea);
-  const bool overlap1 = csArea1.overlaps(refreshArea);
-
-  return overlap0 || overlap1;
-}
-
-bool CodingStructure::overlapDirty() const
-{
-  const Position topLeft  = area.Y().topLeft();
-  const Position topRight = area.Y().topRight();
-
-  const bool insideLeft  = isClean(topLeft, ChannelType::LUMA);
-  const bool insideRight = isClean(topRight, ChannelType::LUMA);
-
-  return insideLeft != insideRight;
-}
-
-bool CodingStructure::dirtyCrossTTV() const
-{
-  const int  csX = area.lx();
-  const int  csY = area.ly();
-  const int  csWidth = area.lwidth();
-  const int  csHeight = area.lheight();
-
-  const Area csArea0 = Area(csX, csY, csWidth >> 2, csHeight);
-  const Area csArea1 = Area(csX + (csWidth >> 2), csY, csWidth >> 1, csHeight);
-  const Area csArea2 = Area(csX + (csWidth >> 2) + (csWidth >> 1), csY, csWidth >> 2, csHeight);
-
-  const bool clean0 = isClean(csArea0, ChannelType::LUMA);
-  const bool clean1 = isClean(csArea1, ChannelType::LUMA);
-  const bool clean2 = isClean(csArea2, ChannelType::LUMA);
-
-  const bool allclean = clean0 && clean1 && clean2;
-
-  return !allclean;
-}
-
-bool CodingStructure::dirtyCrossBTV() const
-{
-  const int  csX = area.lx();
-  const int  csY = area.ly();
-  const int  csWidth = area.lwidth();
-  const int  csHeight = area.lheight();
-
-  const Area csArea0 = Area(csX,                  csY, (csWidth >> 1), csHeight);
-  const Area csArea1 = Area(csX + (csWidth >> 1), csY, (csWidth >> 1), csHeight);
-
-  const bool clean0 = isClean(csArea0, ChannelType::LUMA);
-  const bool clean1 = isClean(csArea1, ChannelType::LUMA);
-
-  const bool allclean = clean0 && clean1;
-
-  return !allclean;
-}
-
-bool CodingStructure::isClean(const Position &intPos, const Mv &fracMv) const
-{
-  /*
-    1. non gdr picture --> false;
-    2. gdr picture
-         pos in clean area -> true
-         pos in dirty area -> false
-  */
-  const Picture* const curPic = slice->getPic();
-
-  if (!curPic)
-  {
-    return false;
-  }
-
-  const bool isCurGdrPicture = curPic->gdrParam.inGdrInterval;
-
-  if (isCurGdrPicture)
-  {
-    const int lumaPixelAway = 4;
-    const int chromaPixelAway = 5;
-
-    const int mvShift = MV_FRACTIONAL_BITS_INTERNAL;
-    const int mvLumaFrac = (1 << mvShift);
-    const int mvChromaFrac = (mvLumaFrac << 1);
-
-    const bool isIntLumaMv = (fracMv.getHor() % mvLumaFrac) == 0;
-    const bool isIntChromaMv = (fracMv.getHor() % mvChromaFrac) == 0;
-
-    const int scaledEndX = curPic->gdrParam.verBoundary << mvShift;
-
-    const Position origFracPos = Position(intPos.x << mvShift, intPos.y << mvShift);
-    const int lastLumaPos = ((origFracPos.x / mvLumaFrac)   * mvLumaFrac) + fracMv.getHor() + (isIntLumaMv ? 0 : (lumaPixelAway << mvShift));
-    const int lastChromaPos = ((origFracPos.x / mvChromaFrac) * mvChromaFrac) + fracMv.getHor() + (isIntChromaMv ? 0 : (chromaPixelAway << mvShift));
-
-    const int lastPelPos = std::max(lastLumaPos, lastChromaPos);
-
-    return (lastPelPos < scaledEndX);
-  }
-
-  return true;
-}
-
-bool CodingStructure::isClean(const Position &intPos, const Mv &fracMv, const Picture *const refPic) const
-{
-  /*
-    1. non gdr picture --> false;
-    2. gdr picture
-         pos in clean area -> true
-         pos in dirty area -> false
-  */
-  if (!refPic)
-  {
-    return false;
-  }
-
-  const bool isRefGdrPicture = refPic->gdrParam.inGdrInterval;
-
-  if (isRefGdrPicture)
-  {
-    const int lumaPixelAway = 4;
-    const int chromaPixelAway = 5;
-
-    const int mvShift = MV_FRACTIONAL_BITS_INTERNAL;
-    const int mvLumaFrac = (1 << mvShift);
-    const int mvChromaFrac = (mvLumaFrac << 1);
-
-    const bool isIntLumaMv = (fracMv.getHor() % mvLumaFrac) == 0;
-    const bool isIntChromaMv = (fracMv.getHor() % mvChromaFrac) == 0;
-
-    const int  scaledEndX = refPic->gdrParam.verBoundary << mvShift;
-
-    const Position origFracPos = Position((intPos.x) << mvShift, intPos.y << mvShift);
-    const int lastLumaPos = ((origFracPos.x / mvLumaFrac)   * mvLumaFrac) + fracMv.getHor() + (isIntLumaMv ? 0 : (lumaPixelAway << mvShift));
-    const int lastChromaPos = ((origFracPos.x / mvChromaFrac) * mvChromaFrac) + fracMv.getHor() + (isIntChromaMv ? 0 : (chromaPixelAway << mvShift));
-
-    const int lastPelPos = std::max(lastLumaPos, lastChromaPos);
-
-    return (lastPelPos < scaledEndX);
-  }
-  else
-  {
-    // refPic is normal picture
-    const bool isCurGdrPicture = slice->getPic()->gdrParam.inGdrInterval;
-
-    return !isCurGdrPicture;
-  }
-}
-
-bool CodingStructure::isClean(const Position &intPos, const Mv &fracMv, RefPicList e, int refIdx, bool isSubPu) const
-{
-  /*
-    1. non gdr picture --> false;
-    2. gdr picture
-         pos in clean area -> true
-         pos in dirty area -> false
-  */
-  if (refIdx < 0)
-  {
-    return false;
-  }
-
-  const Picture* refPic = (refIdx == IBC_REF_IDX) ? slice->getPic() : slice->getRefPic(e, refIdx);
-  const bool isExceedNumRef = isSubPu && (refIdx >= slice->getNumRefIdx(e));
-
-  if (!refPic || isExceedNumRef)
-  {
-    return false;
-  }
-
-  const bool isRefGdrPicture = refPic->gdrParam.inGdrInterval;
-
-  if (isRefGdrPicture)
-  {
-    const int lumaPixelAway   = 4 + (isSubPu? 1 : 0);
-    const int chromaPixelAway = 4 + (isSubPu? 2 : 0);
-
-    const int mvShift      = MV_FRACTIONAL_BITS_INTERNAL;
-    const int mvLumaFrac   = (1 << mvShift);
-    const int mvChromaFrac = (mvLumaFrac << 1);
-
-    const bool isIntLumaMv      = (fracMv.getHor() % mvLumaFrac  ) == 0;
-    const bool isIntChromaMv    = isSubPu ? false : (fracMv.getHor() % mvChromaFrac) == 0;
-
-    const int  scaledEndX       = refPic->gdrParam.verBoundary << mvShift;
-
-
-    const Position origFracPos = Position((intPos.x) << mvShift, intPos.y << mvShift);
-    const int lastLumaPos      = ((origFracPos.x / mvLumaFrac)   * mvLumaFrac)   + fracMv.getHor() + (isIntLumaMv   ? 0 : (lumaPixelAway   << mvShift));
-    const int lastChromaPos    = ((origFracPos.x / mvChromaFrac) * mvChromaFrac) + fracMv.getHor() + (isIntChromaMv ? 0 : (chromaPixelAway << mvShift)) ;
-
-    const int lastPelPos    = std::max(lastLumaPos, lastChromaPos);
-
-    return (lastPelPos < scaledEndX);
-  }
-  else
-  {
-    // refPic is normal picture
-    const bool isCurGdrPicture = slice->getPic()->gdrParam.inGdrInterval;
-
-    return !isCurGdrPicture;
-  }
-}
-
-bool CodingStructure::isClean(const Position &intPos, RefPicList e, int refIdx) const
-{
-  /*
-    1. non gdr picture --> false;
-    2. gdr picture
-         pos in clean area -> true
-         pos in dirty area -> false
-  */
-  const Picture* const refPic = slice->getRefPic(e, refIdx);
-
-  if (!refPic || refIdx < 0)
-  {
-    return false;
-  }
-
-  const bool isRefGdrPicture = refPic->gdrParam.inGdrInterval;
-
-  if (isRefGdrPicture)
-  {
-    return (intPos.x < refPic->gdrParam.verBoundary);
-  }
-  else
-  {
-    // refPic is normal picture
-    const bool isCurGdrPicture = slice->getPic()->gdrParam.inGdrInterval;
-
-    return !isCurGdrPicture;
-  }
-}
-
-bool CodingStructure::isClean(const Position &intPos, const Picture* const refPic) const
-{
-  if (!refPic)
-  {
-    return false;
-  }
-
-  const bool isRefGdrPicture = refPic->gdrParam.inGdrInterval;
-
-  if (isRefGdrPicture)
-  {
-    return (intPos.x < refPic->gdrParam.verBoundary);
-  }
-  else
-  {
-    // refPic is normal picture
-    const bool isCurGdrPicture = slice->getPic()->gdrParam.inGdrInterval;
-
-    return !isCurGdrPicture;
-  }
-}
-
-bool CodingStructure::isClean(const int x, const int y, const ChannelType effChType) const
-{
-  /*
-    1. non gdr picture --> false;
-    2. gdr picture
-         pos in clean area -> true
-         pos in dirty area -> false
-  */
-
-  const bool isCurGdrPicture = picture->gdrParam.inGdrInterval;
-  if (isCurGdrPicture)
-  {
-    const int verBoundaryForChannelType = picture->gdrParam.verBoundary >> to_underlying(effChType);
-    return (x < verBoundaryForChannelType);
-  }
-
-  return true;
-}
-
-bool CodingStructure::isClean(const Position &intPos, const ChannelType effChType) const
-{
-  return isClean(intPos.x, intPos.y, effChType);
-}
-
-bool CodingStructure::isClean(const Area &area, const ChannelType effChType) const
-{
-  Position pTopLeft  = area.topLeft();
-  Position pTopRight = area.topRight();
-  Position pBotLeft  = area.bottomLeft();
-  Position pBotRight = area.bottomRight();
-
-  bool bTopLeft  = isClean(pTopLeft,  effChType);
-  bool bTopRight = isClean(pTopRight, effChType);
-  bool bBotLeft  = isClean(pBotLeft,  effChType);
-  bool bBotRight = isClean(pBotRight, effChType);
-
-  return bTopLeft && bTopRight && bBotLeft && bBotRight;
-}
-
-bool CodingStructure::isClean(const ChannelType effChType) const
-{
-  return isClean(area.Y(), effChType);
-}
-
-bool CodingStructure::isSubPuClean(const PredictionUnit &pu, const Mv *mv) const
-{
-  const CMotionBuf mb = pu.getMotionBuf();
-
-  if (pu.cu->affine)
-  {
-    const Position puPos = pu.Y().pos();
-    const Size subPuSize = Size(4, 4);
-
-    const bool isSubPu = true;
-
-    for (int y = 0; y < mb.height; y++)
-    {
-      for (int x = 0; x < mb.width; x++)
-      {
-
-        const MotionInfo mi = mb.at(x, y);
-        const Position subPuPos  = Position{puPos.x + (x << 2), puPos.y + (y << 2)};
-        const Area     subPuArea = Area(subPuPos, subPuSize);
-        const Position subPuTR   = subPuArea.topRight();
-
-        // check if SubPu with L0 is Out of boundary
-        if (mi.refIdx[0] >= 0)
-        {
-          if (!isClean(subPuTR, mi.mv[0], REF_PIC_LIST_0, mi.refIdx[0], isSubPu))
-          {
-            return false;
-          }
-        }
-
-        // check if SubPu wiht L1 is Out of boundary
-        if (mi.refIdx[1] >= 0)
-        {
-          if (!isClean(subPuTR, mi.mv[1], REF_PIC_LIST_1, mi.refIdx[1], isSubPu))
-          {
-            return false;
-          }
-        }
-      }
-    }
-  }
-
-  return true;
-}
-#endif
-
-
-bool CodingStructure::isDecomp( const Position &pos, const ChannelType effChType )
-{
-  const CompArea &_blk = area.block(effChType);
-
-  if (_blk.contains(pos))
-  {
-    return m_isDecomp[effChType][rsAddr(pos, _blk, _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
-  }
-  else if( parent )
-  {
-    return parent->isDecomp( pos, effChType );
-  }
-  else
-  {
-    return false;
-  }
-}
-
-bool CodingStructure::isDecomp( const Position &pos, const ChannelType effChType ) const
-{
-  const CompArea &_blk = area.block(effChType);
-
-  if (_blk.contains(pos))
-  {
-    return m_isDecomp[effChType][rsAddr(pos, _blk, _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
-  }
-  else if( parent )
-  {
-    return parent->isDecomp( pos, effChType );
-  }
-  else
-  {
-    return false;
-  }
-}
-
-void CodingStructure::setDecomp(const CompArea &_area, const bool _isCoded /*= true*/)
-{
-  const UnitScale& scale = unitScale[_area.compID];
-
-  AreaBuf<bool> isCodedBlk(m_isDecomp[toChannelType(_area.compID)]
-                             + rsAddr(_area, area.blocks[_area.compID].pos(), area.blocks[_area.compID].width, scale),
-                           area.blocks[_area.compID].width >> scale.posx, _area.width >> scale.posx,
-                           _area.height >> scale.posy);
-  isCodedBlk.fill( _isCoded );
-}
-
-void CodingStructure::setDecomp(const UnitArea &_area, const bool _isCoded /*= true*/)
-{
-  for( uint32_t i = 0; i < _area.blocks.size(); i++ )
-  {
-    if (_area.blocks[i].valid())
-    {
-      setDecomp(_area.blocks[i], _isCoded);
-    }
-  }
-}
-
-const int CodingStructure::signalModeCons( const PartSplit split, Partitioner &partitioner, const ModeType modeTypeParent ) const
-{
-  if (CS::isDualITree(*this) || modeTypeParent != MODE_TYPE_ALL
-      || partitioner.currArea().chromaFormat == ChromaFormat::_444
-      || !isChromaEnabled(partitioner.currArea().chromaFormat))
-  {
-    return LDT_MODE_TYPE_INHERIT;
-  }
-  int minLumaArea = partitioner.currArea().lumaSize().area();
-  if (split == CU_QUAD_SPLIT || split == CU_TRIH_SPLIT || split == CU_TRIV_SPLIT) // the area is split into 3 or 4 parts
-  {
-    minLumaArea = minLumaArea >> 2;
-  }
-  else if (split == CU_VERT_SPLIT || split == CU_HORZ_SPLIT) // the area is split into 2 parts
-  {
-    minLumaArea = minLumaArea >> 1;
-  }
-  int minChromaBlock =
-    minLumaArea >> (getChannelTypeScaleX(ChannelType::CHROMA, partitioner.currArea().chromaFormat)
-                    + getChannelTypeScaleY(ChannelType::CHROMA, partitioner.currArea().chromaFormat));
-  bool is2xNChroma = (partitioner.currArea().chromaSize().width == 4 && split == CU_VERT_SPLIT) || (partitioner.currArea().chromaSize().width == 8 && split == CU_TRIV_SPLIT);
-  return minChromaBlock >= 16 && !is2xNChroma ? LDT_MODE_TYPE_INHERIT : ((minLumaArea < 32) || slice->isIntra()) ? LDT_MODE_TYPE_INFER : LDT_MODE_TYPE_SIGNAL;
-}
-
-void CodingStructure::clearCuPuTuIdxMap( const UnitArea &_area, uint32_t numCu, uint32_t numPu, uint32_t numTu, uint32_t* pOffset )
-{
-  UnitArea clippedArea = clipArea( _area, *picture );
-
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(_area.chromaFormat); chType++)
-  {
-    const CompArea &_selfBlk = area.block(chType);
-    const CompArea &_blk     = clippedArea.block(chType);
-
-    const UnitScale& scale = unitScale[_blk.compID];
-    const Area scaledSelf = scale.scale( _selfBlk );
-    const Area scaledBlk = scale.scale( _blk );
-    const size_t offset = rsAddr( scaledBlk.pos(), scaledSelf.pos(), scaledSelf.width );
-
-    unsigned *idxPtrCU = m_cuIdx[chType] + offset;
-    AreaBuf<uint32_t>( idxPtrCU, scaledSelf.width, scaledBlk.size() ).fill( 0 );
-
-    unsigned *idxPtrPU = m_puIdx[chType] + offset;
-    AreaBuf<uint32_t>( idxPtrPU, scaledSelf.width, scaledBlk.size() ).fill( 0 );
-
-    unsigned *idxPtrTU = m_tuIdx[chType] + offset;
-    AreaBuf<uint32_t>( idxPtrTU, scaledSelf.width, scaledBlk.size() ).fill( 0 );
-  }
-
-  //pop cu/pu/tus
-  for( int i = m_numTUs; i > numTu; i-- )
-  {
-    m_tuPool.giveBack(tus.back());
-    tus.pop_back();
-    m_numTUs--;
-  }
-  for( int i = m_numPUs; i > numPu; i-- )
-  {
-    m_puPool.giveBack(pus.back());
-    pus.pop_back();
-    m_numPUs--;
-  }
-  for( int i = m_numCUs; i > numCu; i-- )
-  {
-    m_cuPool.giveBack(cus.back());
-    cus.pop_back();
-    m_numCUs--;
-  }
-  for (int i = 0; i < MAX_NUM_COMPONENT; i++)
-  {
-    m_offsets[i] = pOffset[i];
-  }
-}
-
-CodingUnit* CodingStructure::getLumaCU( const Position &pos )
-{
-  const CompArea &_blk = area.block(ChannelType::LUMA);
+  const ChannelType effChType = CH_L;
+  const CompArea& _blk = area.blocks[effChType];
   CHECK( !_blk.contains( pos ), "must contain the pos" );
 
-  const unsigned idx = m_cuIdx[ChannelType::LUMA][rsAddr(pos, _blk.pos(), _blk.width, unitScale[COMPONENT_Y])];
+  return m_cuPtr[effChType][rsAddr( pos, _blk.pos(), _blk.width, unitScale[effChType] )];
+}
 
-  if (idx != 0)
-  {
-    return cus[idx - 1];
-  }
-  else
+CodingUnit* CodingStructure::getCU( const Position& pos, const ChannelType effChType, const TreeType _treeType )
+{
+  CHECKD(_treeType == TREE_C && effChType == CH_L && parent == nullptr && _treeType == TREE_C && effChType == CH_L, "parent shall be valid; consider using function getLumaCU()");
+
+  CodingStructure* cs = _treeType == TREE_C && effChType == CH_L ? parent : this;
+  while (cs && !cs->area.blocks[effChType].contains(pos)) cs = cs->parent;
+
+  if (!cs)
   {
     return nullptr;
   }
+  else
+  {
+    const Area& _blk = cs->area.blocks[effChType];
+    return cs->m_cuPtr[effChType][rsAddr(pos, _blk.pos(), _blk.width, unitScale[effChType])];
+  }
 }
 
-CodingUnit* CodingStructure::getCU( const Position &pos, const ChannelType effChType )
+const CodingUnit* CodingStructure::getCU( const Position& pos, const ChannelType effChType, const TreeType _treeType ) const
 {
-  const CompArea &_blk = area.block(effChType);
+  CHECKD(_treeType == TREE_C && effChType == CH_L && parent == nullptr && _treeType == TREE_C && effChType == CH_L, "parent shall be valid; consider using function getLumaCU()");
 
-  if (!_blk.contains(pos) || (treeType == TREE_C && isLuma(effChType)))
+  const CodingStructure* cs = _treeType == TREE_C && effChType == CH_L ? parent : this;
+  while (cs && !cs->area.blocks[effChType].contains(pos)) cs = cs->parent;
+
+  if (!cs)
   {
-    //keep this check, which is helpful to identify bugs
-    if (treeType == TREE_C && isLuma(effChType))
-    {
-      CHECK( parent == nullptr, "parent shall be valid; consider using function getLumaCU()" );
-      CHECK( parent->treeType != TREE_D, "wrong parent treeType " );
-    }
-    if (parent)
-    {
-      return parent->getCU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
+    return nullptr;
   }
   else
   {
-    const unsigned idx =
-      m_cuIdx[effChType][rsAddr(pos, _blk.pos(), _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
-
-    if (idx != 0)
-    {
-      return cus[idx - 1];
-    }
-    else
-    {
-      return nullptr;
-    }
+    const Area& _blk = cs->area.blocks[effChType];
+    return cs->m_cuPtr[effChType][rsAddr( pos, _blk.pos(), _blk.width, unitScale[effChType] )];
   }
 }
 
-const CodingUnit* CodingStructure::getCU( const Position &pos, const ChannelType effChType ) const
+TransformUnit* CodingStructure::getTU( const Position& pos, const ChannelType effChType, const int subTuIdx )
 {
-  const CompArea &_blk = area.block(effChType);
-
-  if (!_blk.contains(pos) || (treeType == TREE_C && isLuma(effChType)))
-  {
-    if (treeType == TREE_C && isLuma(effChType))
-    {
-      CHECK( parent == nullptr, "parent shall be valid; consider using function getLumaCU()" );
-      CHECK( parent->treeType != TREE_D, "wrong parent treeType" );
-    }
-    if (parent)
-    {
-      return parent->getCU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
-  }
-  else
-  {
-    const unsigned idx =
-      m_cuIdx[effChType][rsAddr(pos, _blk.pos(), _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
-
-    if (idx != 0)
-    {
-      return cus[idx - 1];
-    }
-    else
-    {
-      return nullptr;
-    }
-  }
-}
-
-PredictionUnit* CodingStructure::getPU( const Position &pos, const ChannelType effChType )
-{
-  const CompArea &_blk = area.block(effChType);
+  const CompArea& _blk = area.blocks[effChType];
 
   if( !_blk.contains( pos ) )
   {
-    if (parent)
-    {
-      return parent->getPU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
+    if( parent ) return parent->getTU( pos, effChType );
+    else         return nullptr;
   }
   else
   {
-    const unsigned idx =
-      m_puIdx[effChType][rsAddr(pos, _blk.pos(), _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
+    CodingUnit* cu = m_cuPtr[effChType][rsAddr( pos, _blk.pos(), _blk.width, unitScale[effChType] )];
+    if( !cu ) return nullptr;
 
-    if (idx != 0)
+    TransformUnit* ptu = cu->firstTU;
+
+    while( ptu && !ptu->blocks[effChType].contains( pos ) )
     {
-      return pus[idx - 1];
+      ptu = ptu->next;
     }
-    else
-    {
-      return nullptr;
-    }
+
+    return ptu;
   }
 }
 
-const PredictionUnit * CodingStructure::getPU( const Position &pos, const ChannelType effChType ) const
+const TransformUnit * CodingStructure::getTU( const Position& pos, const ChannelType effChType, const int subTuIdx ) const
 {
-  const CompArea &_blk = area.block(effChType);
+  const CompArea& _blk = area.blocks[effChType];
 
   if( !_blk.contains( pos ) )
   {
-    if (parent)
-    {
-      return parent->getPU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
+    if( parent ) return parent->getTU( pos, effChType );
+    else         return nullptr;
   }
   else
   {
-    const unsigned idx =
-      m_puIdx[effChType][rsAddr(pos, _blk.pos(), _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
+    const CodingUnit* cu = m_cuPtr[effChType][rsAddr( pos, _blk.pos(), _blk.width, unitScale[effChType] )];
+    if( !cu ) return nullptr;
 
-    if (idx != 0)
+    const TransformUnit* ptu = cu->firstTU;
+
+    while( ptu && !ptu->blocks[effChType].contains( pos ) )
     {
-      return pus[idx - 1];
+      ptu = ptu->next;
     }
-    else
-    {
-      return nullptr;
-    }
+
+    return ptu;
   }
 }
 
-TransformUnit* CodingStructure::getTU( const Position &pos, const ChannelType effChType, const int subTuIdx )
+CodingUnit& CodingStructure::addCU( const UnitArea& unit, const ChannelType chType, CodingUnit* cuInit )
 {
-  const CompArea &_blk = area.block(effChType);
+  CodingUnit* cu;
 
-  if( !_blk.contains( pos ) )
+  if( cuInit )
   {
-    if (parent)
-    {
-      return parent->getTU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
+    cu = cuInit;
   }
   else
   {
-    const unsigned idx =
-      m_tuIdx[effChType][rsAddr(pos, _blk.pos(), _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
+    if( m_unitCacheMutex ) m_unitCacheMutex->lock();
 
-    if( idx != 0 )
-    {
-      unsigned extraIdx = 0;
-      if( isLuma( effChType ) )
-      {
-        const TransformUnit& tu = *tus[idx - 1];
+    cu = m_cuCache.get();
 
-        if (tu.cu->ispMode != ISPType::NONE)   // Intra SubPartitions mode
-        {
-          //we obtain the offset to index the corresponding sub-partition
-          if( subTuIdx != -1 )
-          {
-            extraIdx = subTuIdx;
-          }
-          else
-          {
-            while( !tus[idx - 1 + extraIdx]->blocks[getFirstComponentOfChannel( effChType )].contains( pos ) )
-            {
-              extraIdx++;
-              CHECK( tus[idx - 1 + extraIdx]->cu->treeType == TREE_C, "tu searched by position points to a chroma tree CU" );
-              CHECK( extraIdx > 3, "extraIdx > 3" );
-            }
-          }
-        }
-      }
-      return tus[idx - 1 + extraIdx];
-    }
-    else if (m_isTuEnc)
-    {
-      return parent->getTU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
+    if( m_unitCacheMutex ) m_unitCacheMutex->unlock();
+
+    cu->UnitArea::operator=( unit );
+    cu->initData();
+    cu->slice   = nullptr;
   }
-}
-
-const TransformUnit * CodingStructure::getTU( const Position &pos, const ChannelType effChType, const int subTuIdx ) const
-{
-  const CompArea &_blk = area.block(effChType);
-
-  if( !_blk.contains( pos ) )
-  {
-    if (parent)
-    {
-      return parent->getTU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
-  }
-  else
-  {
-    const unsigned idx =
-      m_tuIdx[effChType][rsAddr(pos, _blk.pos(), _blk.width, unitScale[getFirstComponentOfChannel(effChType)])];
-    if( idx != 0 )
-    {
-      unsigned extraIdx = 0;
-      if( isLuma( effChType ) )
-      {
-        const TransformUnit& tu = *tus[idx - 1];
-        if (tu.cu->ispMode != ISPType::NONE)   // Intra SubPartitions mode
-        {
-          //we obtain the offset to index the corresponding sub-partition
-          if( subTuIdx != -1 )
-          {
-            extraIdx = subTuIdx;
-          }
-          else
-          {
-            while ( !tus[idx - 1 + extraIdx]->blocks[getFirstComponentOfChannel( effChType )].contains(pos) )
-            {
-              extraIdx++;
-              CHECK( tus[idx - 1 + extraIdx]->cu->treeType == TREE_C, "tu searched by position points to a chroma tree CU" );
-              CHECK( extraIdx > 3, "extraIdx > 3" );
-            }
-          }
-        }
-      }
-      return tus[idx - 1 + extraIdx];
-    }
-    else if (m_isTuEnc)
-    {
-      return parent->getTU(pos, effChType);
-    }
-    else
-    {
-      return nullptr;
-    }
-  }
-}
-
-CodingUnit& CodingStructure::addCU( const UnitArea &unit, const ChannelType chType )
-{
-  CodingUnit *cu = m_cuPool.get();
-
-  cu->UnitArea::operator=( unit );
-  cu->cs        = this;
-  cu->slice     = nullptr;
+  
   cu->next      = nullptr;
-  cu->firstPU   = nullptr;
-  cu->lastPU    = nullptr;
   cu->firstTU   = nullptr;
   cu->lastTU    = nullptr;
-  cu->initData();
   cu->chType    = chType;
-  cu->treeType = treeType;
-  cu->modeType = modeType;
+  cu->cs        = this;
 
   CodingUnit *prevCU = m_numCUs > 0 ? cus.back() : nullptr;
 
   if( prevCU )
   {
-    prevCU->next = cu;
+    const int prevCuCtuRsAddr = getCtuAddr( recalcPosition( area.chromaFormat, prevCU->chType, CH_L, prevCU->blocks[prevCU->chType] ), *pcv );
+    const int currCuCtuRsAddr = getCtuAddr( recalcPosition( area.chromaFormat,         chType, CH_L,     cu->blocks[        chType] ), *pcv );
+
+    if( prevCuCtuRsAddr == currCuCtuRsAddr )
+    {
+      prevCU->next = cu;
+    }
   }
 
   cus.push_back( cu );
 
-  uint32_t idx = ++m_numCUs;
-  cu->idx  = idx;
+  Mv* prevCuMvd = cuInit ? cuInit->mvdL0SubPu : nullptr;
+  
+  cu->idx        = ++m_numCUs;
+  cu->mvdL0SubPu = nullptr;
 
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
+  if( isLuma( chType ) && unit.lheight() >= 8 && unit.lwidth() >= 8 && unit.Y().area() >= 128 )
   {
-    if (!cu->block(chType).valid())
+    CHECKD( m_dmvrMvCacheOffset >= m_dmvrMvCache.size(), "dmvr cache offset out of bounds" );
+
+    int mvdArrSize       = std::max<int>( 1, unit.lwidth() >> DMVR_SUBCU_SIZE_LOG2 ) * std::max<int>( 1, unit.lheight() >> DMVR_SUBCU_SIZE_LOG2 );
+    cu->mvdL0SubPu       = &m_dmvrMvCache[m_dmvrMvCacheOffset];
+    m_dmvrMvCacheOffset += mvdArrSize;
+
+    if( prevCuMvd )
+      memcpy( cu->mvdL0SubPu, prevCuMvd, sizeof( Mv ) * mvdArrSize );
+  }
+
+  uint32_t numCh = getNumberValidChannels( area.chromaFormat );
+
+  for( uint32_t i = 0; i < numCh; i++ )
+  {
+    if( !cu->blocks[i].valid() )
     {
       continue;
     }
 
-    const CompArea &_selfBlk = area.block(chType);
-    const CompArea &_blk     = cu->block(chType);
+    const CompArea& _selfBlk = area.blocks[i];
+    const CompArea     &_blk = cu-> blocks[i];
 
     const UnitScale& scale = unitScale[_blk.compID];
     const Area scaledSelf  = scale.scale( _selfBlk );
     const Area scaledBlk   = scale.scale(     _blk );
-    unsigned        *idxPtr      = m_cuIdx[chType] + rsAddr(scaledBlk.pos(), scaledSelf.pos(), scaledSelf.width);
-    CHECK( *idxPtr, "Overwriting a pre-existing value, should be '0'!" );
-    AreaBuf<uint32_t>( idxPtr, scaledSelf.width, scaledBlk.size() ).fill( idx );
+    CodingUnit **cuPtr     = m_cuPtr[i] + rsAddr( scaledBlk.pos(), scaledSelf.pos(), scaledSelf.width );
+
+    CHECKD( *cuPtr, "Overwriting a pre-existing value, should be '0'!" );
+
+    g_pelBufOP.fillPtrMap( ( void** ) cuPtr, scaledSelf.width, scaledBlk.width, scaledBlk.height, ( void* ) cu );
   }
 
   return *cu;
 }
 
-PredictionUnit& CodingStructure::addPU( const UnitArea &unit, const ChannelType chType )
+TransformUnit& CodingStructure::addTU( const UnitArea& unit, const ChannelType chType, CodingUnit* cu, TransformUnit* tuInit )
 {
-  PredictionUnit *pu = m_puPool.get();
+  TransformUnit* tu;
 
-  pu->UnitArea::operator=( unit );
-  pu->initData();
-  pu->next   = nullptr;
-  pu->cs     = this;
-  pu->cu     = m_isTuEnc ? cus[0] : getCU(unit.block(chType).pos(), chType);
-  pu->chType = chType;
-
-  PredictionUnit *prevPU = m_numPUs > 0 ? pus.back() : nullptr;
-
-  if( prevPU && prevPU->cu == pu->cu )
+  if( tuInit )
   {
-    prevPU->next = pu;
+    tu = tuInit;
+  }
+  else
+  {
+    if( m_unitCacheMutex ) m_unitCacheMutex->lock();
+
+    tu = m_tuCache.get();
+
+    if( m_unitCacheMutex ) m_unitCacheMutex->unlock();
+
+    tu->UnitArea::operator=( unit );
+    tu->initData();
   }
 
-  pus.push_back( pu );
-
-  if( pu->cu->firstPU == nullptr )
-  {
-    pu->cu->firstPU = pu;
-  }
-  pu->cu->lastPU = pu;
-
-  uint32_t idx = ++m_numPUs;
-  pu->idx  = idx;
-
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
-  {
-    if (!pu->block(chType).valid())
-    {
-      continue;
-    }
-
-    const CompArea &_selfBlk = area.block(chType);
-    const CompArea &_blk     = pu->block(chType);
-
-    const UnitScale& scale = unitScale[_blk.compID];
-    const Area scaledSelf  = scale.scale( _selfBlk );
-    const Area scaledBlk   = scale.scale(     _blk );
-    unsigned        *idxPtr      = m_puIdx[chType] + rsAddr(scaledBlk.pos(), scaledSelf.pos(), scaledSelf.width);
-    CHECK( *idxPtr, "Overwriting a pre-existing value, should be '0'!" );
-    AreaBuf<uint32_t>( idxPtr, scaledSelf.width, scaledBlk.size() ).fill( idx );
-  }
-
-  return *pu;
-}
-
-TransformUnit& CodingStructure::addTU( const UnitArea &unit, const ChannelType chType )
-{
-  TransformUnit *tu = m_tuPool.get();
-
-  tu->UnitArea::operator=( unit );
-  tu->initData();
   tu->next   = nullptr;
   tu->prev   = nullptr;
   tu->cs     = this;
-  tu->cu     = m_isTuEnc ? cus[0] : getCU(unit.block(chType).pos(), chType);
+  tu->cu     = cu;
   tu->chType = chType;
 
   TransformUnit *prevTU = m_numTUs > 0 ? tus.back() : nullptr;
@@ -1109,71 +353,39 @@ TransformUnit& CodingStructure::addTU( const UnitArea &unit, const ChannelType c
   }
 
   uint32_t idx = ++m_numTUs;
-  tu->idx  = idx;
+  tu->idx = idx;
 
-  TCoeff *coeffs[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
-  Pel    *pltIdxBuf[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
-  EnumArray<PLTRunMode*, ChannelType> runType;
+  TCoeffSig *coeffs[3] = { nullptr, nullptr, nullptr };
 
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
+  uint32_t numCh = getNumberValidComponents( area.chromaFormat );
+
+  for( uint32_t i = 0; i < numCh; i++ )
   {
-    if (!tu->block(chType).valid())
+    if( !tu->blocks[i].valid() )
     {
       continue;
     }
 
-    const CompArea &_selfBlk = area.block(chType);
-    const CompArea &_blk     = tu->block(chType);
-
-    bool isIspTu = tu->cu != nullptr && tu->cu->ispMode != ISPType::NONE && isLuma(_blk.compID);
-
-    bool isFirstIspTu = false;
-    if (isIspTu)
-    {
-      isFirstIspTu = CU::isISPFirst(*tu->cu, _blk, getFirstComponentOfChannel(chType));
-    }
-    if (!isIspTu || isFirstIspTu)
-    {
-      const UnitScale &scale = unitScale[_blk.compID];
-
-      const Area scaledSelf = scale.scale(_selfBlk);
-      const Area scaledBlk  = isIspTu ? scale.scale(tu->cu->block(chType)) : scale.scale(_blk);
-      unsigned  *idxPtr     = m_tuIdx[chType] + rsAddr(scaledBlk.pos(), scaledSelf.pos(), scaledSelf.width);
-      CHECK(*idxPtr, "Overwriting a pre-existing value, should be '0'!");
-      AreaBuf<uint32_t>(idxPtr, scaledSelf.width, scaledBlk.size()).fill(idx);
-    }
-
-    if (!m_runType[chType].empty())
-    {
-      runType[chType] = m_runType[chType].data() + m_offsets[getFirstComponentOfChannel(chType)];
-    }
-  }
-
-  const bool usePlt = sps->getPLTMode();
-  uint32_t numComp = ::getNumberValidComponents(area.chromaFormat);
-
-  for (uint32_t i = 0; i < numComp; i++)
-  {
-    if (!tu->blocks[i].valid())
-    {
-      continue;
-    }
-
-    coeffs[i] = m_coeffs[i].data() + m_offsets[i];
-    if (usePlt)
-    {
-      pltIdxBuf[i] = m_pltIdxBuf[i].data() + m_offsets[i];
-    }
+    coeffs[i] = m_coeffs[i] + m_offsets[i];
 
     unsigned areaSize = tu->blocks[i].area();
     m_offsets[i] += areaSize;
+
+    const bool cpyRsi = tuInit &&
+                      ( tuInit->cbf[i] ||
+                 ( i && tuInit->jointCbCr && numCh > 1 && ( TU::getCbf( *tuInit, COMP_Cb ) || TU::getCbf( *tuInit, COMP_Cr ) ) )
+                      );
+
+    if( cpyRsi )
+      memcpy( coeffs[i], tu->m_coeffs[i], areaSize * sizeof( TCoeffSig ) );
   }
-  tu->init(coeffs, pltIdxBuf, runType);
+
+  tu->init( coeffs );
 
   return *tu;
 }
 
-void CodingStructure::addEmptyTUs( Partitioner &partitioner )
+void CodingStructure::addEmptyTUs( Partitioner &partitioner, CodingUnit* cu )
 {
   const UnitArea& area    = partitioner.currArea();
   bool            split   = partitioner.canSplit(TU_MAX_TR_SPLIT, *this);
@@ -1184,34 +396,22 @@ void CodingStructure::addEmptyTUs( Partitioner &partitioner )
     partitioner.splitCurrArea( TU_MAX_TR_SPLIT, *this );
     do
     {
-      addEmptyTUs( partitioner );
+      addEmptyTUs( partitioner, cu );
     } while( partitioner.nextPart( *this ) );
 
     partitioner.exitCurrSplit();
   }
   else
   {
-    TransformUnit &tu = this->addTU( CS::getArea( *this, area, partitioner.chType ), partitioner.chType );
-    unsigned numBlocks = ::getNumberValidTBlocks( *this->pcv );
-    const bool usePlt = sps->getPLTMode();
-    for( unsigned compID = COMPONENT_Y; compID < numBlocks; compID++ )
-    {
-      if( tu.blocks[compID].valid() )
-      {
-        tu.getCoeffs( ComponentID( compID ) ).fill( 0 );
-        if (usePlt)
-        {
-          tu.getcurPLTIdx( ComponentID( compID ) ).fill( 0 );
-        }
-      }
-    }
+    TransformUnit& tu = addTU(CS::getArea(*this, area, partitioner.chType, TreeType(partitioner.treeType)), partitioner.chType, cu);
     tu.depth = trDepth;
   }
 }
 
 CUTraverser CodingStructure::traverseCUs( const UnitArea& unit, const ChannelType effChType )
 {
-  CodingUnit* firstCU = getCU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType );
+  //  CHECK( _treeType != treeType, "not good");
+  CodingUnit* firstCU = getCU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType, TREE_D );
   CodingUnit* lastCU = firstCU;
   if( !CS::isDualITree( *this ) ) //for a more generalized separate tree
   {
@@ -1246,22 +446,10 @@ CUTraverser CodingStructure::traverseCUs( const UnitArea& unit, const ChannelTyp
   }
   else
   {
-    do
-    {
-    } while (lastCU && (lastCU = lastCU->next) && unit.contains(*lastCU));
+  do { } while( lastCU && (0 != ( lastCU = lastCU->next )) && unit.contains( *lastCU ) );
   }
 
   return CUTraverser( firstCU, lastCU );
-}
-
-PUTraverser CodingStructure::traversePUs( const UnitArea& unit, const ChannelType effChType )
-{
-  PredictionUnit* firstPU = getPU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType );
-  PredictionUnit* lastPU  = firstPU;
-
-  do { } while( lastPU && ( lastPU = lastPU->next ) && unit.contains( *lastPU ) );
-
-  return PUTraverser( firstPU, lastPU );
 }
 
 TUTraverser CodingStructure::traverseTUs( const UnitArea& unit, const ChannelType effChType )
@@ -1269,29 +457,19 @@ TUTraverser CodingStructure::traverseTUs( const UnitArea& unit, const ChannelTyp
   TransformUnit* firstTU = getTU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType );
   TransformUnit* lastTU  = firstTU;
 
-  do { } while( lastTU && ( lastTU = lastTU->next ) && unit.contains( *lastTU ) );
+  do { } while( lastTU && (0 != ( lastTU = lastTU->next )) && unit.contains( *lastTU ) );
 
   return TUTraverser( firstTU, lastTU );
 }
 
 cCUTraverser CodingStructure::traverseCUs( const UnitArea& unit, const ChannelType effChType ) const
 {
-  const CodingUnit* firstCU = getCU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType );
+  const CodingUnit* firstCU = getCU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType, TREE_D );
   const CodingUnit* lastCU  = firstCU;
 
-  do { } while( lastCU && ( lastCU = lastCU->next ) && unit.contains( *lastCU ) );
+  do { } while( lastCU && (0 != ( lastCU = lastCU->next )) && unit.contains( *lastCU ) );
 
   return cCUTraverser( firstCU, lastCU );
-}
-
-cPUTraverser CodingStructure::traversePUs( const UnitArea& unit, const ChannelType effChType ) const
-{
-  const PredictionUnit* firstPU = getPU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType );
-  const PredictionUnit* lastPU  = firstPU;
-
-  do { } while( lastPU && ( lastPU = lastPU->next ) && unit.contains( *lastPU ) );
-
-  return cPUTraverser( firstPU, lastPU );
 }
 
 cTUTraverser CodingStructure::traverseTUs( const UnitArea& unit, const ChannelType effChType ) const
@@ -1299,333 +477,252 @@ cTUTraverser CodingStructure::traverseTUs( const UnitArea& unit, const ChannelTy
   const TransformUnit* firstTU = getTU( isLuma( effChType ) ? unit.lumaPos() : unit.chromaPos(), effChType );
   const TransformUnit* lastTU  = firstTU;
 
-  do { } while( lastTU && ( lastTU = lastTU->next ) && unit.contains( *lastTU ) );
+  do { } while( lastTU && (0 != ( lastTU = lastTU->next )) && unit.contains( *lastTU ) );
 
   return cTUTraverser( firstTU, lastTU );
 }
+
+
+
+LFPBuf CodingStructure::getLoopFilterParamBuf(const DeblockEdgeDir& edgeDir)
+{
+  return LFPBuf(m_lfParam[edgeDir], m_mapSize[0]);
+}
+
+const CLFPBuf CodingStructure::getLoopFilterParamBuf(const DeblockEdgeDir& edgeDir) const
+{
+  return CLFPBuf(m_lfParam[edgeDir], m_mapSize[0]);
+}
+
 
 // coding utilities
 
 void CodingStructure::allocateVectorsAtPicLevel()
 {
-  const int  twice     = !pcv->ISingleTree && slice->isIRAP() && isChromaEnabled(pcv->chrFormat) ? 2 : 1;
-  size_t     allocSize = twice * unitScale[COMPONENT_Y].scale(area.blocks[COMPONENT_Y].size()).area();
+  const int  twice = ( !pcv->ISingleTree && slice->isIRAP() && pcv->chrFormat != CHROMA_400 ) ? 2 : 1;
+  size_t allocSize = twice * unitScale[0].scale( area.blocks[0].size() ).area();
 
   cus.reserve( allocSize );
-  pus.reserve( allocSize );
   tus.reserve( allocSize );
 }
 
-void CodingStructure::create(const ChromaFormat &_chromaFormat, const Area& _area, const bool isTopLayer, const bool isPLTused)
-{
-  createInternals(UnitArea(_chromaFormat, _area), isTopLayer, isPLTused);
 
-  if (isTopLayer)
-  {
-    return;
-  }
+
+void CodingStructure::createForSearch( const ChromaFormat _chromaFormat, const Area& _area )
+{
+  createInternals( UnitArea( _chromaFormat, _area ), false );
 
   m_reco.create( area );
   m_pred.create( area );
   m_resi.create( area );
-  m_orgr.create( area );
+  m_rspreco.create( CHROMA_400, area.Y() );
 }
 
-void CodingStructure::create(const UnitArea& _unit, const bool isTopLayer, const bool isPLTused)
+void CodingStructure::createPicLevel( const UnitArea& _unit, const PreCalcValues* _pcv )
 {
-  createInternals(_unit, isTopLayer, isPLTused);
+  pcv = _pcv;
 
-  if (isTopLayer)
-  {
-    return;
-  }
-
-  m_reco.create( area );
-  m_pred.create( area );
-  m_resi.create( area );
-  m_orgr.create( area );
+  createInternals( _unit, true );
 }
 
-void CodingStructure::createInternals(const UnitArea& _unit, const bool isTopLayer, const bool isPLTused)
+static constexpr int UnitScaleArray[NUM_CHROMA_FORMAT][MAX_NUM_COMP][2] =
 {
-  area = _unit;
+  { {2,2}, {0,0}, {0,0} },  // 4:0:0
+  { {2,2}, {1,1}, {1,1} },  // 4:2:0
+  { {2,2}, {1,2}, {1,2} },  // 4:2:2
+  { {2,2}, {2,2}, {2,2} }   // 4:4:4
+};
 
-  for (int i = 0; i < unitScale.size(); i++)
-  {
-    const auto c       = ComponentID(i);
-    const bool present = isLuma(c) || isChromaEnabled(area.chromaFormat);
-    const int  scaleX  = present ? 2 >> getComponentScaleX(c, area.chromaFormat) : 0;
-    const int  scaleY  = present ? 2 >> getComponentScaleY(c, area.chromaFormat) : 0;
-    unitScale[i]       = UnitScale(scaleX, scaleY);
-  }
+void CodingStructure::createInternals( const UnitArea& _unit, const bool isTopLayer )
+{
+  area     = _unit;
+  _maxArea = _unit;
+
+  unitScale[COMP_Y ] = UnitScale( UnitScaleArray[area.chromaFormat][COMP_Y ][0], UnitScaleArray[area.chromaFormat][COMP_Y ][1] );
+  unitScale[COMP_Cb] = UnitScale( UnitScaleArray[area.chromaFormat][COMP_Cb][0], UnitScaleArray[area.chromaFormat][COMP_Cb][1] );
+  unitScale[COMP_Cr] = UnitScale( UnitScaleArray[area.chromaFormat][COMP_Cr][0], UnitScaleArray[area.chromaFormat][COMP_Cr][1] );
 
   picture = nullptr;
   parent  = nullptr;
-
-  const int numComp = getNumberValidComponents(area.chromaFormat);
-
-  for (int i = 0; i < numComp; i++)
-  {
-    m_offsets[i] = 0;
-  }
-
-  if (!isTopLayer)
-  {
-    createTemporaryCsData(isPLTused);
-  }
+  lumaCS  = nullptr;
 
   unsigned _lumaAreaScaled = g_miScaling.scale( area.lumaSize() ).area();
-  m_motionBuf       = new MotionInfo[_lumaAreaScaled];
-  if (!isTopLayer)
+  m_motionBuf = new MotionInfo[_lumaAreaScaled];
+
+  if( isTopLayer )
   {
-    initStructData();
+    motionLutBuf.resize( pps->getNumTileLineIds() );
+  }
+  else
+  {
+    createCoeffs();
+    createTempBuffers( false );
+    initStructData( MAX_INT, false, nullptr );
   }
 }
 
-void CodingStructure::addMiToLut(static_vector<MotionInfo, MAX_NUM_HMVP_CANDS> &lut, const MotionInfo &mi)
+void CodingStructure::createTempBuffers( const bool isTopLayer )
+{
+  unsigned numCh = getNumberValidChannels( area.chromaFormat );
+
+  for( unsigned i = 0; i < numCh; i++ )
+  {
+    Size allocArea  = area.blocks[i].size();
+    m_mapSize[i]    = unitScale[i].scale(allocArea);
+
+    unsigned _area  = unitScale[i].scale( area.blocks[i].size() ).area();
+
+    m_cuPtr[i]      = _area > 0 ? new CodingUnit*    [_area] : nullptr;
+  }
+
+  clearCUs( true );
+
+  for( unsigned i = 0; i < NUM_EDGE_DIR; i++ )
+  {
+    m_lfParam[i] = ( isTopLayer && m_mapSize[0].area() > 0 ) ? ( LoopFilterParam* ) xMalloc( LoopFilterParam, m_mapSize[0].area() ) : nullptr;
+  }
+
+  unsigned _maxNumDmvrMvs = ( area.lwidth() >> 3 ) * ( area.lheight() >> 3 );
+  m_dmvrMvCache.resize( _maxNumDmvrMvs );
+}
+
+void CodingStructure::destroyTempBuffers()
+{
+  for( uint32_t i = 0; i < MAX_NUM_CH; i++ )
+  {
+    delete[] m_cuPtr[i];
+    m_cuPtr[i] = nullptr;
+  }
+
+  for( int i = 0; i < NUM_EDGE_DIR; i++ )
+  {
+    xFree( m_lfParam[i] );
+    m_lfParam[i] = nullptr;
+  }
+
+  // swap the contents of the vector so that memory released
+  std::vector<Mv>().swap( m_dmvrMvCache );
+  std::vector<CodingUnit*>().swap( cus );
+  std::vector<TransformUnit*>().swap( tus );
+}
+
+void CodingStructure::addMiToLut( static_vector<HPMVInfo, MAX_NUM_HMVP_CANDS>& lut, const HPMVInfo& mi )
 {
   size_t currCnt = lut.size();
 
   bool pruned      = false;
   int  sameCandIdx = 0;
 
-  for (int idx = 0; idx < currCnt; idx++)
+  for( int idx = 0; idx < currCnt; idx++ )
   {
-    if (lut[idx] == mi)
+    if( lut[idx] == mi )
     {
       sameCandIdx = idx;
-      pruned      = true;
+      pruned = true;
       break;
     }
   }
 
-  if (pruned || currCnt == lut.capacity())
+  if( pruned || currCnt == lut.capacity() )
   {
-    lut.erase(lut.begin() + sameCandIdx);
+    lut.erase( lut.begin() + sameCandIdx );
   }
 
   lut.push_back(mi);
-}
-
-void CodingStructure::resetPrevPLT(PLTBuf& prevPLT)
-{
-  for (int ch = 0; ch < MAX_NUM_CHANNEL_TYPE; ch++)
-  {
-    prevPLT.curPLTSize[ch] = 0;
-  }
-
-  for (int comp = 0; comp < MAX_NUM_COMPONENT; comp++)
-  {
-    memset(prevPLT.curPLT[comp], 0, MAXPLTPREDSIZE * sizeof(Pel));
-  }
-}
-
-void CodingStructure::reorderPrevPLT(PLTBuf& prevPLT, uint8_t curPLTSize[MAX_NUM_CHANNEL_TYPE], Pel curPLT[MAX_NUM_COMPONENT][MAXPLTSIZE], bool reuseflag[MAX_NUM_CHANNEL_TYPE][MAXPLTPREDSIZE], uint32_t compBegin, uint32_t numComp, bool jointPLT)
-{
-  Pel stuffedPLT[MAX_NUM_COMPONENT][MAXPLTPREDSIZE];
-  uint8_t tempCurPLTsize[MAX_NUM_CHANNEL_TYPE];
-  uint8_t stuffPLTsize[MAX_NUM_COMPONENT];
-
-  uint32_t maxPredPltSize = jointPLT ? MAXPLTPREDSIZE : MAXPLTPREDSIZE_DUALTREE;
-
-  for (int i = compBegin; i < (compBegin + numComp); i++)
-  {
-    ComponentID comID = jointPLT ? (ComponentID)compBegin : ((i > 0) ? COMPONENT_Cb : COMPONENT_Y);
-    tempCurPLTsize[comID] = curPLTSize[comID];
-    stuffPLTsize[i] = 0;
-    memcpy(stuffedPLT[i], curPLT[i], curPLTSize[comID] * sizeof(Pel));
-  }
-
-  for (int ch = compBegin; ch < (compBegin + numComp); ch++)
-  {
-    ComponentID comID = jointPLT ? (ComponentID)compBegin : ((ch > 0) ? COMPONENT_Cb : COMPONENT_Y);
-    if (ch > 1) break;
-    for (int i = 0; i < prevPLT.curPLTSize[comID]; i++)
-    {
-      if (tempCurPLTsize[comID] + stuffPLTsize[ch] >= maxPredPltSize)
-      {
-        break;
-      }
-
-      if (!reuseflag[comID][i])
-      {
-        if (ch == COMPONENT_Y)
-        {
-          stuffedPLT[0][tempCurPLTsize[comID] + stuffPLTsize[ch]] = prevPLT.curPLT[0][i];
-        }
-        else
-        {
-          stuffedPLT[1][tempCurPLTsize[comID] + stuffPLTsize[ch]] = prevPLT.curPLT[1][i];
-          stuffedPLT[2][tempCurPLTsize[comID] + stuffPLTsize[ch]] = prevPLT.curPLT[2][i];
-        }
-        stuffPLTsize[ch]++;
-      }
-    }
-  }
-
-  for (int i = compBegin; i < (compBegin + numComp); i++)
-  {
-    ComponentID comID = jointPLT ? (ComponentID)compBegin : ((i > 0) ? COMPONENT_Cb : COMPONENT_Y);
-    prevPLT.curPLTSize[comID] = curPLTSize[comID] + stuffPLTsize[comID];
-    memcpy(prevPLT.curPLT[i], stuffedPLT[i], prevPLT.curPLTSize[comID] * sizeof(Pel));
-    CHECK(prevPLT.curPLTSize[comID] > maxPredPltSize, " Maximum palette predictor size exceed limit");
-  }
-}
-
-void CodingStructure::setPrevPLT(PLTBuf predictor)
-{
-  for (int comp = 0; comp < MAX_NUM_CHANNEL_TYPE; comp++)
-  {
-    prevPLT.curPLTSize[comp] = predictor.curPLTSize[comp];
-  }
-  for (int comp = 0; comp < MAX_NUM_COMPONENT; comp++)
-  {
-    memcpy(prevPLT.curPLT[comp], predictor.curPLT[comp], MAXPLTPREDSIZE * sizeof(Pel));
-  }
-}
-
-void CodingStructure::storePrevPLT(PLTBuf& predictor)
-{
-  for (int comp = 0; comp < MAX_NUM_CHANNEL_TYPE; comp++)
-  {
-    predictor.curPLTSize[comp] = prevPLT.curPLTSize[comp];
-  }
-  for (int comp = 0; comp < MAX_NUM_COMPONENT; comp++)
-  {
-    memcpy(predictor.curPLT[comp], prevPLT.curPLT[comp], MAXPLTPREDSIZE * sizeof(Pel));
-  }
 }
 
 void CodingStructure::rebindPicBufs()
 {
   CHECK( parent, "rebindPicBufs can only be used for the top level CodingStructure" );
 
-  if (!picture->M_BUFS(0, PIC_RECONSTRUCTION).bufs.empty())
-  {
-    m_reco.createFromBuf(picture->M_BUFS(0, PIC_RECONSTRUCTION));
-  }
-  else
-  {
-    m_reco.destroy();
-  }
-  if (!picture->M_BUFS(0, PIC_PREDICTION).bufs.empty())
-  {
-    m_pred.createFromBuf(picture->M_BUFS(0, PIC_PREDICTION));
-  }
-  else
-  {
-    m_pred.destroy();
-  }
-  if (!picture->M_BUFS(0, PIC_RESIDUAL).bufs.empty())
-  {
-    m_resi.createFromBuf(picture->M_BUFS(0, PIC_RESIDUAL));
-  }
-  else
-  {
-    m_resi.destroy();
-  }
-  if( pcv->isEncoder )
-  {
-    if (!picture->M_BUFS(0, PIC_RESIDUAL).bufs.empty())
-    {
-      m_orgr.create(area.chromaFormat, area.blocks[0], pcv->maxCUWidth);
-    }
-    else
-    {
-      m_orgr.destroy();
-    }
-  }
+  if( !picture->m_picBufs[ PIC_RECONSTRUCTION ].bufs.empty() ) m_reco.createFromBuf( picture->m_picBufs[ PIC_RECONSTRUCTION ] );
+  else                                                         m_reco.destroy();
+  if( !picture->m_picBufs[ PIC_PREDICTION     ].bufs.empty() ) m_pred.createFromBuf( picture->m_picBufs[ PIC_PREDICTION ] );
+  else                                                         m_pred.destroy();
+  if( !picture->m_picBufs[ PIC_RESIDUAL       ].bufs.empty() ) m_resi.createFromBuf( picture->m_picBufs[ PIC_RESIDUAL ] );
+  else                                                         m_resi.destroy();
 }
 
-void CodingStructure::createCoeffs(const bool isPLTused)
+void CodingStructure::createCoeffs()
 {
-  const unsigned numCh = getNumberValidComponents( area.chromaFormat );
-
-  for( unsigned i = 0; i < numCh; i++ )
+  const unsigned numComp = getNumberValidComponents( area.chromaFormat );
+  for( unsigned i = 0; i < numComp; i++ )
   {
     unsigned _area = area.blocks[i].area();
-
-    m_coeffs[i].resize(_area);
-    if (isPLTused)
-    {
-      m_pltIdxBuf[i].resize(_area);
-    }
+    m_coeffs[i] = _area > 0 ? ( TCoeffSig* ) xMalloc( TCoeffSig, _area ) : nullptr;
   }
 
-  if (isPLTused)
+  for( unsigned i = 0; i < numComp; i++ )
   {
-    for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
-    {
-      unsigned _area = area.block(chType).area();
-
-      m_runType[chType].resize(_area);
-    }
+    m_offsets[i] = 0;
   }
 }
 
 void CodingStructure::destroyCoeffs()
 {
-  for( uint32_t i = 0; i < MAX_NUM_COMPONENT; i++ )
+  for( uint32_t i = 0; i < MAX_NUM_COMP; i++ )
   {
-    free(m_coeffs[i]);
-    free(m_pltIdxBuf[i]);
-  }
-
-  for (auto &ptr: m_runType)
-  {
-    free(ptr);
+    if( m_coeffs[i] ) { xFree( m_coeffs[i] ); m_coeffs[i] = nullptr; }
   }
 }
 
-void CodingStructure::initSubStructure( CodingStructure& subStruct, const ChannelType _chType, const UnitArea &subArea, const bool &isTuEnc )
+void CodingStructure::initSubStructure( CodingStructure& subStruct, const ChannelType _chType, const UnitArea& subArea, const bool isTuEnc, PelStorage* pOrgBuffer, PelStorage* pRspBuffer )
 {
   CHECK( this == &subStruct, "Trying to init self as sub-structure" );
 
-  subStruct.useDbCost = false;
+  subStruct.parent = this;
+
+  if( pOrgBuffer ) pOrgBuffer->compactResize( subArea );
+  UnitArea subAreaLuma = subArea;
+  subAreaLuma.blocks.resize( 1 );
+  if( pRspBuffer ) pRspBuffer->compactResize( subAreaLuma );
+
+  subStruct.m_org    = (pOrgBuffer) ? pOrgBuffer : m_org;
+  subStruct.m_rsporg = (pRspBuffer) ? pRspBuffer : m_rsporg;
+
+  subStruct.compactResize( subArea );
+
   subStruct.costDbOffset = 0;
-  subStruct.useInterlayerRef = false;
-
-  for( uint32_t i = 0; i < subStruct.area.blocks.size(); i++ )
-  {
-    CHECKD( subStruct.area.blocks[i].size() != subArea.blocks[i].size(), "Trying to init sub-structure of incompatible size" );
-
-    subStruct.area.blocks[i].pos() = subArea.blocks[i].pos();
-  }
 
   if( parent )
   {
     // allow this to be false at the top level (need for edge CTU's)
-    CHECKD( !area.contains( subStruct.area ), "Trying to init sub-structure not contained in the parent" );
+    CHECKD( !area.contains( subArea ), "Trying to init sub-structure not contained in the parent" );
   }
 
   subStruct.parent    = this;
   subStruct.picture   = picture;
+  subStruct.lumaCS    = picture->cs;
 
   subStruct.sps       = sps;
   subStruct.vps       = vps;
   subStruct.pps       = pps;
   subStruct.picHeader = picHeader;
 
-  memcpy(subStruct.alfApss, alfApss, sizeof(alfApss));
+  memcpy(subStruct.alfAps, alfAps, sizeof(alfAps));
 
-  subStruct.lmcsAps = lmcsAps;
-  subStruct.scalinglistAps = scalinglistAps;
+  subStruct.lmcsAps   = lmcsAps;
 
   subStruct.slice     = slice;
   subStruct.baseQP    = baseQP;
-  subStruct.prevQP[_chType] = prevQP[_chType];
+  subStruct.prevQP[_chType]
+                      = prevQP[_chType];
   subStruct.pcv       = pcv;
 
   subStruct.m_isTuEnc = isTuEnc;
 
-  subStruct.motionLut = motionLut;
+  if( nullptr == parent )
+  {
+    const int ctuPosX = subArea.lx() >> pcv->maxCUSizeLog2;
+    const int ctuPosY = subArea.ly() >> pcv->maxCUSizeLog2;
+    subStruct.motionLut = motionLutBuf[pps->getTileLineId( ctuPosX, ctuPosY )];
+  }
+  else
+  {
+    subStruct.motionLut = motionLut;
+  }
 
-  subStruct.prevPLT = prevPLT;
-
-  subStruct.treeType  = treeType;
-  subStruct.modeType  = modeType;
-
-  subStruct.initStructData(currQP[_chType]);
+  subStruct.initStructData( currQP[_chType] );
 
   if( isTuEnc )
   {
@@ -1637,68 +734,27 @@ void CodingStructure::initSubStructure( CodingStructure& subStruct, const Channe
 
       cu = *pcu;
     }
-
-    for( const auto &ppu : pus )
-    {
-      PredictionUnit &pu = subStruct.addPU( *ppu, _chType );
-
-      pu = *ppu;
-    }
-
-    for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
-    {
-      std::copy_n(m_isDecomp[chType],
-                  unitScale[getFirstComponentOfChannel(chType)].scale(area.block(chType).size()).area(),
-                  subStruct.m_isDecomp[chType]);
-    }
   }
 }
 
-void CodingStructure::useSubStructure( const CodingStructure& subStruct, const ChannelType chType, const UnitArea &subArea, const bool cpyPred /*= true*/, const bool cpyReco /*= true*/, const bool cpyOrgResi /*= true*/, const bool cpyResi /*= true*/, const bool updateCost /*= true*/ )
+void CodingStructure::useSubStructure( CodingStructure& subStruct, const ChannelType chType, const TreeType _treeType, const UnitArea& subArea, const bool cpyRecoToPic )
 {
   UnitArea clippedArea = clipArea( subArea, *picture );
 
-  setDecomp( clippedArea );
-
-  CPelUnitBuf subPredBuf = cpyPred ? subStruct.getPredBuf( clippedArea ) : CPelUnitBuf();
-  CPelUnitBuf subResiBuf = cpyResi ? subStruct.getResiBuf( clippedArea ) : CPelUnitBuf();
-  CPelUnitBuf subRecoBuf = cpyReco ? subStruct.getRecoBuf( clippedArea ) : CPelUnitBuf();
+  CPelUnitBuf subRecoBuf = subStruct.getRecoBuf( clippedArea );
 
   if( parent )
   {
     // copy data to picture
-    if (cpyPred)
-    {
-      getPredBuf(clippedArea).copyFrom(subPredBuf);
-    }
-    if (cpyResi)
-    {
-      getResiBuf(clippedArea).copyFrom(subResiBuf);
-    }
-    if (cpyReco)
-    {
-      getRecoBuf(clippedArea).copyFrom(subRecoBuf);
-    }
-    if (cpyOrgResi)
-    {
-      getOrgResiBuf(clippedArea).copyFrom(subStruct.getOrgResiBuf(clippedArea));
-    }
+    getRecoBuf( clippedArea ).copyFrom( subRecoBuf );
   }
 
-  if (cpyPred)
+  if( cpyRecoToPic )
   {
-    picture->getPredBuf(clippedArea).copyFrom(subPredBuf);
-  }
-  if (cpyResi)
-  {
-    picture->getResiBuf(clippedArea).copyFrom(subResiBuf);
-  }
-  if (cpyReco)
-  {
-    picture->getRecoBuf(clippedArea).copyFrom(subRecoBuf);
+    picture->getRecoBuf( clippedArea ).copyFrom( subRecoBuf );
   }
 
-  if (!subStruct.m_isTuEnc && ((!slice->isIntra() || slice->getSPS()->getIBCFlag()) && chType != ChannelType::CHROMA))
+  if( !subStruct.m_isTuEnc && ( ( !slice->isIntra() || slice->sps->IBC ) && chType != CH_C ) )
   {
     // copy motion buffer
     MotionBuf ownMB  = getMotionBuf          ( clippedArea );
@@ -1706,19 +762,23 @@ void CodingStructure::useSubStructure( const CodingStructure& subStruct, const C
 
     ownMB.copyFrom( subMB );
 
-    motionLut = subStruct.motionLut;
+    if( nullptr == parent )
+    {
+      const int ctuPosX = subStruct.area.lx() >> pcv->maxCUSizeLog2;
+      const int ctuPosY = subStruct.area.ly() >> pcv->maxCUSizeLog2;
+      motionLutBuf[pps->getTileLineId( ctuPosX, ctuPosY )] = subStruct.motionLut;
+    }
+    else
+    {
+      motionLut = subStruct.motionLut;
+    }
   }
-  prevPLT = subStruct.prevPLT;
 
+  fracBits += subStruct.fracBits;
+  dist     += subStruct.dist;
+  cost     += subStruct.cost;
+  costDbOffset += subStruct.costDbOffset;
 
-  if ( updateCost )
-  {
-    fracBits += subStruct.fracBits;
-    dist     += subStruct.dist;
-    cost     += subStruct.cost;
-    costDbOffset += subStruct.costDbOffset;
-    useInterlayerRef |= subStruct.useInterlayerRef;
-  }
   if( parent )
   {
     // allow this to be false at the top level
@@ -1732,57 +792,71 @@ void CodingStructure::useSubStructure( const CodingStructure& subStruct, const C
   }
   else
   {
-    for( const auto &pcu : subStruct.cus )
+    if( &m_cuCache == &subStruct.m_cuCache )
     {
-      // add an analogue CU into own CU store
-      const UnitArea &cuPatch = *pcu;
-      CodingUnit &cu = addCU( cuPatch, pcu->chType );
+      // copy the CUs over with taking ownership
+      for( const auto& pcu : subStruct.cus )
+      {
+        // add an analogue CU into own CU store
+        const UnitArea& cuPatch = *pcu;
+        addCU( cuPatch, pcu->chType, pcu );
+      }
 
-      // copy the CU info from subPatch
-      cu = *pcu;
+      subStruct.cus.resize( 0 );
+    }
+    else
+    {
+      // copy the CUs over
+      for( const auto& pcu : subStruct.cus )
+      {
+        // add an analogue CU into own CU store
+        const UnitArea& cuPatch = *pcu;
+
+        CodingUnit& cu = addCU( cuPatch, pcu->chType );
+
+        // copy the CU info from subPatch
+        cu = *pcu;
+      }
     }
   }
 
-  // copy the PUs over
-  if( subStruct.m_isTuEnc )
+  if( &m_tuCache == &subStruct.m_tuCache )
   {
-    // don't copy if the substruct was created for encoding of the TUs
+    // copy the TUs over with taking ownership
+    for( const auto& ptu : subStruct.tus )
+    {
+      // add an analogue TU into own TU store
+      const UnitArea& tuPatch = *ptu;
+      addTU( tuPatch, ptu->chType, getCU( tuPatch.blocks[ptu->chType].pos(), ptu->chType, _treeType ), ptu );
+    }
+
+    subStruct.tus.resize( 0 );
   }
   else
   {
-    for( const auto &ppu : subStruct.pus )
+    // copy the TUs over
+    for( const auto& ptu : subStruct.tus )
     {
-      // add an analogue PU into own PU store
-      const UnitArea &puPatch = *ppu;
-      PredictionUnit &pu = addPU( puPatch, ppu->chType );
+      // add an analogue TU into own TU store
+      const UnitArea& tuPatch = *ptu;
 
-      // copy the PU info from subPatch
-      pu = *ppu;
+      TransformUnit& tu = addTU( tuPatch, ptu->chType, getCU( tuPatch.blocks[ptu->chType], ptu->chType, _treeType ) );
+
+      // copy the TU info from subPatch
+      tu = *ptu;
     }
-  }
-  // copy the TUs over
-  for( const auto &ptu : subStruct.tus )
-  {
-    // add an analogue TU into own TU store
-    const UnitArea &tuPatch = *ptu;
-    TransformUnit &tu = addTU( tuPatch, ptu->chType );
-
-    // copy the TU info from subPatch
-    tu = *ptu;
   }
 }
 
-void CodingStructure::copyStructure( const CodingStructure& other, const ChannelType chType, const bool copyTUs, const bool copyRecoBuf )
+void CodingStructure::copyStructure( const CodingStructure& other, const ChannelType chType, const TreeType _treeType, const bool copyTUs, const bool copyRecoBuf )
 {
-  fracBits = other.fracBits;
-  dist     = other.dist;
-  cost     = other.cost;
-  costDbOffset = other.costDbOffset;
-  useInterlayerRef = other.useInterlayerRef;
-
+  fracBits      = other.fracBits;
+  dist          = other.dist;
+  cost          = other.cost;
+  costDbOffset  = other.costDbOffset;
   CHECKD( area != other.area, "Incompatible sizes" );
 
-  const UnitArea dualITreeArea = CS::getArea( *this, this->area, chType );
+  const UnitArea dualITreeArea = CS::getArea( *this, area, chType, _treeType );
 
   // copy the CUs over
   for (const auto &pcu : other.cus)
@@ -1792,7 +866,7 @@ void CodingStructure::copyStructure( const CodingStructure& other, const Channel
       continue;
     }
     // add an analogue CU into own CU store
-    const UnitArea &cuPatch = *pcu;
+    const UnitArea& cuPatch = *pcu;
 
     CodingUnit &cu = addCU(cuPatch, pcu->chType);
 
@@ -1800,22 +874,7 @@ void CodingStructure::copyStructure( const CodingStructure& other, const Channel
     cu = *pcu;
   }
 
-  // copy the PUs over
-  for (const auto &ppu : other.pus)
-  {
-    if( !dualITreeArea.contains( *ppu ) )
-    {
-      continue;
-    }
-    // add an analogue PU into own PU store
-    const UnitArea &puPatch = *ppu;
-
-    PredictionUnit &pu = addPU(puPatch, ppu->chType);
-    // copy the PU info from subPatch
-    pu = *ppu;
-  }
-
-  if (!other.slice->isIntra() || other.slice->getSPS()->getIBCFlag())
+  if (!other.slice->isIntra() || other.slice->sps->IBC)
   {
     // copy motion buffer
     MotionBuf  ownMB = getMotionBuf();
@@ -1825,7 +884,6 @@ void CodingStructure::copyStructure( const CodingStructure& other, const Channel
 
     motionLut = other.motionLut;
   }
-  prevPLT = other.prevPLT;
 
   if( copyTUs )
   {
@@ -1837,8 +895,10 @@ void CodingStructure::copyStructure( const CodingStructure& other, const Channel
         continue;
       }
       // add an analogue TU into own TU store
-      const UnitArea &tuPatch = *ptu;
-      TransformUnit &tu = addTU( tuPatch, ptu->chType );
+      const UnitArea& tuPatch = *ptu;
+
+      TransformUnit& tu = addTU( tuPatch, ptu->chType, getCU( tuPatch.blocks[ptu->chType], ptu->chType, _treeType) );
+
       // copy the TU info from subPatch
       tu = *ptu;
     }
@@ -1856,100 +916,89 @@ void CodingStructure::copyStructure( const CodingStructure& other, const Channel
 
     // copy data to picture
     picture->getRecoBuf( area ).copyFrom( recoBuf );
-    if (other.pcv->isEncoder)
-    {
-      CPelUnitBuf predBuf = other.getPredBuf(area);
-      if (parent)
-      {
-        getPredBuf(area).copyFrom(predBuf);
-      }
-      picture->getPredBuf(area).copyFrom(predBuf);
-    }
-
-    // required for DebugCTU
-    for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
-    {
-      const size_t _area = unitScale[getFirstComponentOfChannel(chType)].scaleArea(area.block(chType).area());
-      std::copy_n(other.m_isDecomp[chType], _area, m_isDecomp[chType]);
-    }
   }
 }
 
-void CodingStructure::initStructData( const int &QP, const bool &skipMotBuf )
+void CodingStructure::compactResize( const UnitArea& _area )
 {
-  clearPUs();
-  clearTUs();
-  clearCUs();
+  UnitArea areaLuma = _area;
+  areaLuma.blocks.resize( 1 );
+
+  m_pred   .compactResize( _area );
+  m_reco   .compactResize( _area );
+  m_resi   .compactResize( _area );
+  m_rspreco.compactResize( areaLuma );
+
+  for( uint32_t i = 0; i < _area.blocks.size(); i++ )
+  {
+    CHECK( _maxArea.blocks[i].area() < _area.blocks[i].area(), "Trying to init sub-structure of incompatible size" );
+  }
+
+  area = _area;
+}
+
+void CodingStructure::initStructData( const int QP, const bool skipMotBuf, const UnitArea* _area )
+{
+  clearTUs( false );
+  clearCUs( false );
+
+  if( _area ) compactResize( *_area );
 
   if( QP < MAX_INT )
   {
-    currQP.fill(QP);
+    currQP[0] = currQP[1] = QP;
   }
 
-  if (!skipMotBuf && (!parent || ((!slice->isIntra() || slice->getSPS()->getIBCFlag()) && !m_isTuEnc)))
+  if( !skipMotBuf && ( !parent || ( ( !slice->isIntra() || slice->sps->IBC ) && !m_isTuEnc ) ) )
   {
-    getMotionBuf().memset(0);
+    getMotionBuf().memset( -1 );
   }
 
-  fracBits = 0;
-  dist     = 0;
-  cost     = MAX_DOUBLE;
-  lumaCost = MAX_DOUBLE;
-  costDbOffset = 0;
-  useDbCost = false;
-  interHad = std::numeric_limits<Distortion>::max();
-  useInterlayerRef = false;
+  m_dmvrMvCacheOffset = 0;
+
+  fracBits      = 0;
+  dist          = 0;
+  cost          = MAX_DOUBLE;
+  lumaCost      = MAX_DOUBLE;
+  costDbOffset  = 0;
+  interHad      = MAX_DISTORTION;
 }
 
 
-void CodingStructure::clearTUs()
+void CodingStructure::clearTUs( bool force )
 {
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
-  {
-    size_t _area = (area.block(chType).area() >> unitScale[getFirstComponentOfChannel(chType)].area);
-    std::fill_n(m_isDecomp[chType], _area, false);
-    std::fill_n(m_tuIdx[chType], _area, 0);
-  }
+#if CLEAR_AND_CHECK_TUIDX
+  if( !m_numTUs && !force ) return;
 
-  const int numComp = getNumberValidComponents(area.chromaFormat);
-  for (int i = 0; i < numComp; i++)
-  {
-    m_offsets[i] = 0;
-  }
+#endif
+  memset( m_offsets, 0, sizeof( m_offsets ) );
 
   for( auto &pcu : cus )
   {
     pcu->firstTU = pcu->lastTU = nullptr;
   }
 
-  m_tuPool.giveBack(tus);
+  if ( m_unitCacheMutex ) m_unitCacheMutex->lock();
+  m_tuCache.cache( tus );
+  if ( m_unitCacheMutex ) m_unitCacheMutex->unlock();
+
   m_numTUs = 0;
 }
 
-void CodingStructure::clearPUs()
+void CodingStructure::clearCUs( bool force )
 {
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
+  if( !m_numCUs && !force ) return;
+
+  int numCh = getNumberValidChannels( area.chromaFormat );
+  for( int i = 0; i < numCh; i++ )
   {
-    std::fill_n(m_puIdx[chType], unitScale[getFirstComponentOfChannel(chType)].scaleArea(area.block(chType).area()), 0);
+    memset( m_cuPtr[i], 0, sizeof( *m_cuPtr[0] ) * unitScale[i].scaleArea( area.blocks[i].area() ) );
   }
 
-  m_puPool.giveBack(pus);
-  m_numPUs = 0;
+  if ( m_unitCacheMutex ) m_unitCacheMutex->lock();
+  m_cuCache.cache( cus );
+  if ( m_unitCacheMutex ) m_unitCacheMutex->unlock();
 
-  for( auto &pcu : cus )
-  {
-    pcu->firstPU = pcu->lastPU = nullptr;
-  }
-}
-
-void CodingStructure::clearCUs()
-{
-  for (auto chType = ChannelType::LUMA; chType <= ::getLastChannel(area.chromaFormat); chType++)
-  {
-    std::fill_n(m_cuIdx[chType], unitScale[getFirstComponentOfChannel(chType)].scaleArea(area.block(chType).area()), 0);
-  }
-
-  m_cuPool.giveBack(cus);
   m_numCUs = 0;
 }
 
@@ -1981,7 +1030,6 @@ MotionInfo& CodingStructure::getMotionInfo( const Position& pos )
 {
   CHECKD( !area.Y().contains( pos ), "Trying to access motion information outside of this coding structure" );
 
-  //return getMotionBuf().at( g_miScaling.scale( pos - area.lumaPos() ) );
   // bypass the motion buf calling and get the value directly
   const unsigned stride = g_miScaling.scaleHor( area.lumaSize().width );
   const Position miPos  = g_miScaling.scale( pos - area.lumaPos() );
@@ -1993,7 +1041,6 @@ const MotionInfo& CodingStructure::getMotionInfo( const Position& pos ) const
 {
   CHECKD( !area.Y().contains( pos ), "Trying to access motion information outside of this coding structure" );
 
-  //return getMotionBuf().at( g_miScaling.scale( pos - area.lumaPos() ) );
   // bypass the motion buf calling and get the value directly
   const unsigned stride = g_miScaling.scaleHor( area.lumaSize().width );
   const Position miPos  = g_miScaling.scale( pos - area.lumaPos() );
@@ -2001,55 +1048,28 @@ const MotionInfo& CodingStructure::getMotionInfo( const Position& pos ) const
   return *( m_motionBuf + miPos.y * stride + miPos.x );
 }
 
-
-// data accessors
-       PelBuf     CodingStructure::getPredBuf(const CompArea &blk)           { return getBuf(blk,  PIC_PREDICTION); }
-const CPelBuf     CodingStructure::getPredBuf(const CompArea &blk)     const { return getBuf(blk,  PIC_PREDICTION); }
-       PelUnitBuf CodingStructure::getPredBuf(const UnitArea &unit)          { return getBuf(unit, PIC_PREDICTION); }
-const CPelUnitBuf CodingStructure::getPredBuf(const UnitArea &unit)    const { return getBuf(unit, PIC_PREDICTION); }
-
-       PelBuf     CodingStructure::getResiBuf(const CompArea &blk)           { return getBuf(blk,  PIC_RESIDUAL); }
-const CPelBuf     CodingStructure::getResiBuf(const CompArea &blk)     const { return getBuf(blk,  PIC_RESIDUAL); }
-       PelUnitBuf CodingStructure::getResiBuf(const UnitArea &unit)          { return getBuf(unit, PIC_RESIDUAL); }
-const CPelUnitBuf CodingStructure::getResiBuf(const UnitArea &unit)    const { return getBuf(unit, PIC_RESIDUAL); }
-
-       PelBuf     CodingStructure::getRecoBuf(const CompArea &blk)           { return getBuf(blk,  PIC_RECONSTRUCTION); }
-const CPelBuf     CodingStructure::getRecoBuf(const CompArea &blk)     const { return getBuf(blk,  PIC_RECONSTRUCTION); }
-       PelUnitBuf CodingStructure::getRecoBuf(const UnitArea &unit)          { return getBuf(unit, PIC_RECONSTRUCTION); }
-const CPelUnitBuf CodingStructure::getRecoBuf(const UnitArea &unit)    const { return getBuf(unit, PIC_RECONSTRUCTION); }
-
-       PelBuf     CodingStructure::getOrgResiBuf(const CompArea &blk)        { return getBuf(blk,  PIC_ORG_RESI); }
-const CPelBuf     CodingStructure::getOrgResiBuf(const CompArea &blk)  const { return getBuf(blk,  PIC_ORG_RESI); }
-       PelUnitBuf CodingStructure::getOrgResiBuf(const UnitArea &unit)       { return getBuf(unit, PIC_ORG_RESI); }
-const CPelUnitBuf CodingStructure::getOrgResiBuf(const UnitArea &unit) const { return getBuf(unit, PIC_ORG_RESI); }
-
-       PelBuf     CodingStructure::getOrgBuf(const CompArea &blk)            { return getBuf(blk,  PIC_ORIGINAL); }
-const CPelBuf     CodingStructure::getOrgBuf(const CompArea &blk)      const { return getBuf(blk,  PIC_ORIGINAL); }
-       PelUnitBuf CodingStructure::getOrgBuf(const UnitArea &unit)           { return getBuf(unit, PIC_ORIGINAL); }
-const CPelUnitBuf CodingStructure::getOrgBuf(const UnitArea &unit)     const { return getBuf(unit, PIC_ORIGINAL); }
-
-       PelBuf     CodingStructure::getOrgBuf(const ComponentID &compID)      { return picture->getBuf(area.blocks[compID], PIC_ORIGINAL); }
-const CPelBuf     CodingStructure::getOrgBuf(const ComponentID &compID)const { return picture->getBuf(area.blocks[compID], PIC_ORIGINAL); }
-       PelUnitBuf CodingStructure::getOrgBuf()                               { return picture->getBuf(area, PIC_ORIGINAL); }
-const CPelUnitBuf CodingStructure::getOrgBuf()                         const { return picture->getBuf(area, PIC_ORIGINAL); }
-       PelUnitBuf CodingStructure::getTrueOrgBuf()                           { return picture->getBuf(area, PIC_TRUE_ORIGINAL); }
-const CPelUnitBuf CodingStructure::getTrueOrgBuf()                     const { return picture->getBuf(area, PIC_TRUE_ORIGINAL); }
-
-PelBuf CodingStructure::getBuf( const CompArea &blk, const PictureType &type )
+PelBuf CodingStructure::getBuf( const CompArea& blk, const PictureType type )
 {
   if (!blk.valid())
   {
     return PelBuf();
   }
 
-  if (type == PIC_ORIGINAL)
-  {
-    return picture->getBuf(blk, type);
-  }
-
   const ComponentID compID = blk.compID;
 
-  PelStorage* buf = type == PIC_PREDICTION ? &m_pred : ( type == PIC_RESIDUAL ? &m_resi : ( type == PIC_RECONSTRUCTION ? &m_reco : ( type == PIC_ORG_RESI ? &m_orgr : nullptr ) ) );
+  PelStorage* buf = type == PIC_PREDICTION ? &m_pred : ( type == PIC_RESIDUAL ? &m_resi : ( type == PIC_RECONSTRUCTION ? &m_reco : nullptr ) );
+  if (type == PIC_ORIGINAL)
+  {
+    buf = m_org;
+  }
+  else if( type == PIC_ORIGINAL_RSP)
+  {
+    buf = m_rsporg;
+  }
+  else if (type == PIC_ORIGINAL_RSP_REC)
+  {
+    buf = &m_rspreco;
+  }
 
   CHECK( !buf, "Unknown buffer requested" );
 
@@ -2058,32 +1078,37 @@ PelBuf CodingStructure::getBuf( const CompArea &blk, const PictureType &type )
   CompArea cFinal = blk;
   cFinal.relativeTo( area.blocks[compID] );
 
-#if !KEEP_PRED_AND_RESI_SIGNALS
   if( !parent && ( type == PIC_RESIDUAL || type == PIC_PREDICTION ) )
   {
-    cFinal.x &= ( pcv->maxCUWidthMask  >> getComponentScaleX( blk.compID, blk.chromaFormat ) );
-    cFinal.y &= ( pcv->maxCUHeightMask >> getComponentScaleY( blk.compID, blk.chromaFormat ) );
+    cFinal.x &= ( pcv->maxCUSizeMask >> getComponentScaleX( blk.compID, blk.chromaFormat ) );
+    cFinal.y &= ( pcv->maxCUSizeMask >> getComponentScaleY( blk.compID, blk.chromaFormat ) );
   }
-#endif
 
   return buf->getBuf( cFinal );
 }
 
-const CPelBuf CodingStructure::getBuf( const CompArea &blk, const PictureType &type ) const
+const CPelBuf CodingStructure::getBuf( const CompArea& blk, const PictureType type ) const
 {
   if (!blk.valid())
   {
     return PelBuf();
   }
 
-  if (type == PIC_ORIGINAL)
-  {
-    return picture->getBuf(blk, type);
-  }
-
   const ComponentID compID = blk.compID;
 
-  const PelStorage* buf = type == PIC_PREDICTION ? &m_pred : ( type == PIC_RESIDUAL ? &m_resi : ( type == PIC_RECONSTRUCTION ? &m_reco : ( type == PIC_ORG_RESI ? &m_orgr : nullptr ) ) );
+  const PelStorage* buf = type == PIC_PREDICTION ? &m_pred : ( type == PIC_RESIDUAL ? &m_resi : ( type == PIC_RECONSTRUCTION ? &m_reco : nullptr ) );
+  if (type == PIC_ORIGINAL)
+  {
+    buf = m_org;
+  }
+  else if( type == PIC_ORIGINAL_RSP)
+  {
+    buf = m_rsporg;
+  }
+  else if (type == PIC_ORIGINAL_RSP_REC)
+  {
+    buf = &m_rspreco;
+  }
 
   CHECK( !buf, "Unknown buffer requested" );
 
@@ -2092,21 +1117,19 @@ const CPelBuf CodingStructure::getBuf( const CompArea &blk, const PictureType &t
   CompArea cFinal = blk;
   cFinal.relativeTo( area.blocks[compID] );
 
-#if !KEEP_PRED_AND_RESI_SIGNALS
   if( !parent && ( type == PIC_RESIDUAL || type == PIC_PREDICTION ) )
   {
-    cFinal.x &= ( pcv->maxCUWidthMask  >> getComponentScaleX( blk.compID, blk.chromaFormat ) );
-    cFinal.y &= ( pcv->maxCUHeightMask >> getComponentScaleY( blk.compID, blk.chromaFormat ) );
+    cFinal.x &= ( pcv->maxCUSizeMask >> getComponentScaleX( blk.compID, blk.chromaFormat ) );
+    cFinal.y &= ( pcv->maxCUSizeMask >> getComponentScaleY( blk.compID, blk.chromaFormat ) );
   }
-#endif
 
   return buf->getBuf( cFinal );
 }
 
-PelUnitBuf CodingStructure::getBuf( const UnitArea &unit, const PictureType &type )
+PelUnitBuf CodingStructure::getBuf( const UnitArea& unit, const PictureType type )
 {
   // no parent fetching for buffers
-  if (!isChromaEnabled(area.chromaFormat))
+  if( area.chromaFormat == CHROMA_400 )
   {
     return PelUnitBuf( area.chromaFormat, getBuf( unit.Y(), type ) );
   }
@@ -2116,10 +1139,10 @@ PelUnitBuf CodingStructure::getBuf( const UnitArea &unit, const PictureType &typ
   }
 }
 
-const CPelUnitBuf CodingStructure::getBuf( const UnitArea &unit, const PictureType &type ) const
+const CPelUnitBuf CodingStructure::getBuf( const UnitArea& unit, const PictureType type ) const
 {
   // no parent fetching for buffers
-  if (!isChromaEnabled(area.chromaFormat))
+  if( area.chromaFormat == CHROMA_400 )
   {
     return CPelUnitBuf( area.chromaFormat, getBuf( unit.Y(), type ) );
   }
@@ -2129,76 +1152,70 @@ const CPelUnitBuf CodingStructure::getBuf( const UnitArea &unit, const PictureTy
   }
 }
 
-const CodingUnit* CodingStructure::getCURestricted( const Position &pos, const CodingUnit& curCu, const ChannelType _chType ) const
+const CodingUnit* CodingStructure::getCURestricted( const Position& pos, const CodingUnit& curCu, const ChannelType _chType ) const
 {
-  const CodingUnit* cu = getCU( pos, _chType );
-  // exists       same slice and tile                  cu precedes curCu in encoding order
-  //                                                  (thus, is either from parent CS in RD-search or its index is lower)
-  const bool wavefrontsEnabled = curCu.slice->getSPS()->getEntropyCodingSyncEnabledFlag();
-  int ctuSizeBit = floorLog2(curCu.cs->sps->getMaxCUWidth());
-  int xNbY  = pos.x << getChannelTypeScaleX( _chType, curCu.chromaFormat );
-  int        xCurr             = curCu.block(_chType).x << getChannelTypeScaleX(_chType, curCu.chromaFormat);
-  bool addCheck = (wavefrontsEnabled && (xNbY >> ctuSizeBit) >= (xCurr >> ctuSizeBit) + 1 ) ? false : true;
-  if( cu && CU::isSameSliceAndTile( *cu, curCu ) && ( cu->cs != curCu.cs || cu->idx <= curCu.idx ) && addCheck)
+  const int csx    = getChannelTypeScaleX( _chType, area.chromaFormat );
+  const int csy    = getChannelTypeScaleY( _chType, area.chromaFormat );
+  const int xshift = pcv->maxCUSizeLog2 - csx;
+  const int yshift = pcv->maxCUSizeLog2 - csy;
+  const int ydiff  = ( pos.y >> yshift ) - ( curCu.blocks[_chType].y >> yshift );
+  const int xdiff  = ( pos.x >> xshift ) - ( curCu.blocks[_chType].x >> xshift );
+
+  if( !xdiff && !ydiff )
   {
-    return cu;
+    const CodingUnit* cu = getCU( pos, _chType, curCu.treeType );
+
+    return ( cu && ( cu->cs != curCu.cs || cu->idx <= curCu.idx ) ) ? cu : nullptr;
   }
-  else
-  {
+
+  if( ydiff > 0 || ( ydiff == 0 && xdiff > 0 ) || ( ydiff == -1 && xdiff > ( sps->entropyCodingSyncEnabled ? 0 : 1 ) ) )
     return nullptr;
-  }
+
+  if( pos.x < 0 || pos.y < 0 || ( pos.x * ( 1 << csx ) ) >= pcv->lumaWidth || pps->getTileIdx( pos.x >> xshift, pos.y >> yshift ) != curCu.tileIdx ) return nullptr;
+
+  const CodingUnit* cu = getCU( pos, _chType, curCu.treeType );
+
+  return ( cu && CU::isSameSlice( *cu, curCu ) ) ? cu : nullptr;
 }
 
-const CodingUnit* CodingStructure::getCURestricted( const Position &pos, const Position curPos, const unsigned curSliceIdx, const TileIdx curTileIdx, const ChannelType _chType ) const
+const CodingUnit *CodingStructure::getCURestricted( const Position &pos, const Position curPos, const unsigned curSliceIdx, const unsigned curTileIdx, const ChannelType _chType, const TreeType _treeType ) const
 {
-  const CodingUnit* cu = getCU( pos, _chType );
-  const bool wavefrontsEnabled = this->slice->getSPS()->getEntropyCodingSyncEnabledFlag();
-  int ctuSizeBit = floorLog2(this->sps->getMaxCUWidth());
+  const int csx    = getChannelTypeScaleX( _chType, area.chromaFormat );
+  const int csy    = getChannelTypeScaleY( _chType, area.chromaFormat );
+  const int xshift = pcv->maxCUSizeLog2 - csx;
+  const int yshift = pcv->maxCUSizeLog2 - csy;
+  const int ydiff  = ( pos.y >> yshift ) - ( curPos.y >> yshift );
+  const int xdiff  = ( pos.x >> xshift ) - ( curPos.x >> xshift );
 
-  const int xNbY  = pos.x * (1 << getChannelTypeScaleX(_chType, this->area.chromaFormat));
-  const int xCurr = curPos.x * (1 << getChannelTypeScaleX(_chType, this->area.chromaFormat));
-
-  bool addCheck = (wavefrontsEnabled && (xNbY >> ctuSizeBit) >= (xCurr >> ctuSizeBit) + 1 ) ? false : true;
-  return ( cu && cu->slice->getIndependentSliceIdx() == curSliceIdx && cu->tileIdx == curTileIdx && addCheck ) ? cu : nullptr;
-}
-
-const PredictionUnit* CodingStructure::getPURestricted( const Position &pos, const PredictionUnit& curPu, const ChannelType _chType ) const
-{
-  const PredictionUnit* pu = getPU( pos, _chType );
-  // exists       same slice and tile                  pu precedes curPu in encoding order
-  //                                                  (thus, is either from parent CS in RD-search or its index is lower)
-  const bool wavefrontsEnabled = curPu.cu->slice->getSPS()->getEntropyCodingSyncEnabledFlag();
-  int ctuSizeBit = floorLog2(curPu.cs->sps->getMaxCUWidth());
-  int xNbY  = pos.x << getChannelTypeScaleX( _chType, curPu.chromaFormat );
-  int        xCurr             = curPu.block(_chType).x << getChannelTypeScaleX(_chType, curPu.chromaFormat);
-  bool addCheck = (wavefrontsEnabled && (xNbY >> ctuSizeBit) >= (xCurr >> ctuSizeBit) + 1 ) ? false : true;
-  if( pu && CU::isSameSliceAndTile( *pu->cu, *curPu.cu ) && ( pu->cs != curPu.cs || pu->idx <= curPu.idx ) && addCheck )
+  if( !xdiff && !ydiff )
   {
-    return pu;
+    return getCU( pos, _chType, _treeType );
   }
-  else
-  {
+
+  if( ydiff > 0 || ( ydiff == 0 && xdiff > 0 ) || ( ydiff == -1 && xdiff > ( sps->entropyCodingSyncEnabled ? 0 : 1 ) ) )
     return nullptr;
-  }
+
+  if( pos.x < 0 || pos.y < 0 || ( pos.x << csx ) >= pcv->lumaWidth || pps->getTileIdx( pos.x >> xshift, pos.y >> yshift ) != curTileIdx ) return nullptr;
+
+  const CodingUnit* cu = getCU( pos, _chType, _treeType );
+
+  return ( cu && cu->slice->independentSliceIdx == curSliceIdx && cu->tileIdx == curTileIdx ) ? cu : nullptr;
 }
 
-const TransformUnit* CodingStructure::getTURestricted( const Position &pos, const TransformUnit& curTu, const ChannelType _chType ) const
+const TransformUnit* CodingStructure::getTURestricted( const Position& pos, const TransformUnit& curTu, const ChannelType _chType ) const
 {
+  if( sps->entropyCodingSyncEnabled )
+  {
+    const int xshift = pcv->maxCUSizeLog2 - getChannelTypeScaleX( _chType, curTu.chromaFormat );
+    const int yshift = pcv->maxCUSizeLog2 - getChannelTypeScaleY( _chType, curTu.chromaFormat );
+    if( (pos.x >> xshift) > (curTu.blocks[_chType].x >> xshift) || (pos.y >> yshift) > (curTu.blocks[_chType].y >> yshift) )
+      return nullptr;
+  }
   const TransformUnit* tu = getTU( pos, _chType );
-  // exists       same slice and tile                  tu precedes curTu in encoding order
-  //                                                  (thus, is either from parent CS in RD-search or its index is lower)
-  const bool wavefrontsEnabled = curTu.cu->slice->getSPS()->getEntropyCodingSyncEnabledFlag();
-  int ctuSizeBit = floorLog2(curTu.cs->sps->getMaxCUWidth());
-  int xNbY  = pos.x << getChannelTypeScaleX( _chType, curTu.chromaFormat );
-  int        xCurr             = curTu.block(_chType).x << getChannelTypeScaleX(_chType, curTu.chromaFormat);
-  bool addCheck = (wavefrontsEnabled && (xNbY >> ctuSizeBit) >= (xCurr >> ctuSizeBit) + 1 ) ? false : true;
-  if( tu && CU::isSameSliceAndTile( *tu->cu, *curTu.cu ) && ( tu->cs != curTu.cs || tu->idx <= curTu.idx ) && addCheck )
-  {
-    return tu;
-  }
-  else
-  {
-    return nullptr;
-  }
+  return ( tu && CU::isSameSliceAndTile( *tu->cu, *curTu.cu ) && ( tu->cs != curTu.cs || tu->idx <= curTu.idx ) ) ? tu : nullptr;
 }
+
+} // namespace vvenc
+
+//! \}
 
