@@ -105,7 +105,7 @@ jobs:
 
             # Encode with VTM at 512x512 and capture log output
             $ENCODER \
-              -c $GITHUB_WORKSPACE/VTM/cfg/experimental/encoder_lowdelay_P_vtm_FixedQP_GOP_8.cfg \
+              -c $GITHUB_WORKSPACE/cfg/experimental/encoder_lowdelay_P_vtm_FixedQP_GOP_8.cfg \
               -i "$RAW_SEG" \
               -b encoded_segments/seg_${START}.bin \
               -o "$REC_SEG" \
