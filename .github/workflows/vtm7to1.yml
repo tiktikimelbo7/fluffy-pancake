@@ -30,12 +30,12 @@ jobs:
           sudo apt install -y build-essential cmake unzip wget curl megatools xz-utils ffmpeg
 
 
-      - name: Download VTM Release Binaries
-        run: |
-          mkdir -p VTM/bin
-          wget -q https://github.com/${{ github.repository }}/releases/download/vtm-20.2-v1/vtm-20.2-ubuntu-22.04.zip
-          unzip -j vtm-20.2-ubuntu-22.04.zip -d VTM/bin
-          chmod +x VTM/bin/*
+      - name: Cache VTM  
+        id: cache-vtm  
+        uses: actions/cache@v4  
+        with:  
+          path: VTM/bin/
+          key: vtm-20.2-v1
 
       - name: Locate EncoderApp
         run: |
