@@ -1,0 +1,70 @@
+name: Cache VTM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VTM_VERSION: VTM-20.2
+  VTM_URL: https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM/-/archive/VTM-20.2/VVCSoftware_VTM-VTM-20.2.zip
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            unzip
+
+      - name: Restore source cache
+        id: source-cache
+        uses: actions/cache@v4
+        with:
+          path: VTM
+          key: vtm-source-${{ env.VTM_VERSION }}
+
+      - name: Download VTM
+        if: steps.source-cache.outputs.cache-hit != 'true'
+        run: |
+          wget -O vtm.zip "${VTM_URL}"
+          unzip -q vtm.zip
+          mv VVCSoftware_VTM-${VTM_VERSION} VTM
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: VTM/build
+          key: linux-vtm-build-${{ env.VTM_VERSION }}-${{ hashFiles('VTM/CMakeLists.txt') }}
+          restore-keys: |
+            linux-vtm-build-${{ env.VTM_VERSION }}-
+
+      - name: Configure
+        run: |
+          mkdir -p VTM/build
+          cd VTM/build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cd VTM/build
+          make -j$(nproc)
+
+      - name: Show executables
+        run: |
+          find VTM/build -type f -executable
+
+      - name: Upload VTM Apps
+        uses: actions/upload-artifact@v4
+        with:
+          name: VTM-20.2-Linux
+          path: |
+            VTM/build/bin/*
+            VTM/build/source/App/*/*
+          if-no-files-found: warn
