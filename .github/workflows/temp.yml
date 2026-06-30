@@ -32,4 +32,4 @@ jobs:
 
       - name: Upload dataset to Google Drive
         run: |
-          rclone copy dataset dataset:sevtone_51/dataset --progress
+          rclone copy dataset dataset:Inter4K/dataset --progress
