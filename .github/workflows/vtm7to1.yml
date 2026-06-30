@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p Inter4K_png/Raw/Input Inter4K_png/Raw/Output yuv_segments reconstructed_yuvs
+          mkdir -p Inter4K_png/Raw/Input Inter4K_png/Raw/Output yuv_segments reconstructed_yuvs encoded_segments
 
           # Initialize the encoding log summary
           echo "VTM Encoding Summary - Video ID: ${{ matrix.VIDEO_ID }}" > encoding_summary.txt
