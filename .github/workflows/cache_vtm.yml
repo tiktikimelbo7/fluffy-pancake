@@ -26,22 +26,13 @@ jobs:
           unzip -q vtm.zip
           mv VVCSoftware_VTM-${VTM_VERSION} VTM
 
-      - name: Restore VTM cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: VTM/bin
-          key: vtm-20.2-v1
-
       - name: Configure
-        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p VTM/build
           cd VTM/build
           cmake .. -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           cd VTM/build
           make -j"$(nproc)"
@@ -51,7 +42,6 @@ jobs:
           find VTM/bin -type f -executable
 
       - name: Save VTM cache
-        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: VTM/bin
