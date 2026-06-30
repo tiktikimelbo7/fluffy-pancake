@@ -48,7 +48,7 @@ jobs:
 
       - name: Show executables
         run: |
-          find VTM/build/bin -type f -executable
+          find VTM/bin/umake/gcc-11.4/x86_64/release/ -type f -executable
 
       - name: Upload VTM Apps
         uses: actions/upload-artifact@v4
