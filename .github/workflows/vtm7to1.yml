@@ -36,17 +36,7 @@ jobs:
           path: VTM  
           key: vtm-20.2-v1  
 
-      - name: Download & Build VTM  
-        if: steps.cache-vtm.outputs.cache-hit != 'true'  
-        run: |  
-          wget -q -O vtm.zip "$VTM_URL"  
-          unzip -q vtm.zip  
-          mv VVCSoftware_VTM-VTM-20.2 VTM  
-          mkdir -p VTM/build  
-          cd VTM/build  
-          cmake .. -DCMAKE_BUILD_TYPE=Release  
-          make -j$(nproc)  
-
+      
       - name: Locate EncoderApp  
         run: |  
           ENCODER=$(find $GITHUB_WORKSPACE/VTM -type f \( -name EncoderAppStatic -o -name EncoderApp \) | head -n1)  
