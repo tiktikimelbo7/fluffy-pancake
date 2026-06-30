@@ -13,6 +13,7 @@ jobs:
         VIDEO_ID: [12]
 
     env:
+      VIDEO_ID: ${{ matrix.VIDEO_ID }}
       WIDTH: 512
       HEIGHT: 512
       FPS: 60
