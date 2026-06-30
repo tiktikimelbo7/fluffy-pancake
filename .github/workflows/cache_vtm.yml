@@ -15,24 +15,35 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+      - name: Restore VTM cache
+        id: cache-vtm
+        uses: actions/cache@v4
+        with:
+          path: VTM/bin
+          key: vtm-20.2-v1-${{ runner.os }}
+
       - name: Install dependencies
+        if: steps.cache-vtm.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake unzip wget
 
       - name: Download source
+        if: steps.cache-vtm.outputs.cache-hit != 'true'
         run: |
           wget -O vtm.zip "$VTM_URL"
           unzip -q vtm.zip
           mv VVCSoftware_VTM-${VTM_VERSION} VTM
 
       - name: Configure
+        if: steps.cache-vtm.outputs.cache-hit != 'true'
         run: |
           mkdir -p VTM/build
           cd VTM/build
           cmake .. -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        if: steps.cache-vtm.outputs.cache-hit != 'true'
         run: |
           cd VTM/build
           make -j"$(nproc)"
@@ -40,9 +51,3 @@ jobs:
       - name: Show executables
         run: |
           find VTM/bin -type f -executable
-
-      - name: Save VTM cache
-        uses: actions/cache/save@v4
-        with:
-          path: VTM/bin
-          key: vtm-20.2-v1
