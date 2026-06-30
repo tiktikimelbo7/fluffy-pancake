@@ -1,0 +1,238 @@
+name: VVENC LowDelay Faster → Inter4K PNG Dataset → Google Drive
+
+on:
+  workflow_dispatch:
+
+jobs:
+  convert:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        VIDEO_ID: [12]
+
+    env:
+      WIDTH: 3840
+      HEIGHT: 2160
+      FPS: 60
+      STRIDE: 60
+      QP: 37
+
+    steps:
+
+      # ----------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake git unzip xz-utils megatools wget curl
+
+      # ----------------------------------------
+      - name: Download FFmpeg
+        run: |
+          mkdir -p ffmpeg_bin
+          cd ffmpeg_bin
+          wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+          tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
+
+      # ----------------------------------------
+      - name: Set variables
+        run: |
+          echo "FFMPEG=$GITHUB_WORKSPACE/ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" >> $GITHUB_ENV
+          echo "FFPROBE=$GITHUB_WORKSPACE/ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffprobe" >> $GITHUB_ENV
+          echo "INPUT=dataset/${{ matrix.VIDEO_ID }}.mp4" >> $GITHUB_ENV
+
+      # ----------------------------------------
+      # Cache vvenc build
+      # ----------------------------------------
+      - name: Cache vvenc build
+        id: cache-vvenc
+        uses: actions/cache@v4
+        with:
+          path: vvenc/bin
+          key: vvenc-build-${{ runner.os }}-v1
+
+      # ----------------------------------------
+      # Clone & Build vvenc
+      # ----------------------------------------
+      - name: Clone and build vvenc
+        if: steps.cache-vvenc.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/fraunhoferhhi/vvenc.git vvenc_src
+          cd vvenc_src
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          mkdir -p $GITHUB_WORKSPACE/vvenc/bin
+          cp ../bin/release-static/vvencapp $GITHUB_WORKSPACE/vvenc/bin/
+
+      - name: Set vvenc path
+        run: |
+          echo "VVENCAPP=$GITHUB_WORKSPACE/vvenc/bin/vvencapp" >> $GITHUB_ENV
+
+      # ----------------------------------------
+      # Cache dataset
+      # ----------------------------------------
+      - name: Cache dataset
+        uses: actions/cache@v4
+        with:
+          path: dataset
+          key: dataset-mega-v1-${{ runner.os }}
+
+      # ----------------------------------------
+      - name: Download dataset
+        run: |
+          if [ ! -d dataset ]; then
+            mkdir -p dataset_zip
+            megadl "https://mega.nz/file/kIdhyATA#QjiOI1xFOZjRWpRUKSSPFRWzBx2WpUQ1PLfezxmt740" --path dataset_zip
+            mkdir -p dataset
+            unzip -o dataset_zip/*.zip -d dataset
+          fi
+
+      # ----------------------------------------
+      # Count total frames
+      # ----------------------------------------
+      - name: Detect total frames
+        run: |
+          TOTAL_FRAMES=$($FFPROBE \
+            -v error \
+            -select_streams v:0 \
+            -count_frames \
+            -show_entries stream=nb_read_frames \
+            -of csv=p=0 \
+            "$INPUT")
+          echo "TOTAL_FRAMES=$TOTAL_FRAMES" >> $GITHUB_ENV
+          echo "Total frames: $TOTAL_FRAMES"
+
+      # ----------------------------------------
+      # Per-segment pipeline:
+      #   1. Extract 7 frames (e.g. 1-7, 61-67, …) as a separate YUV
+      #   2. Encode with vvencapp using lowdelay_faster.cfg
+      #   3. Extract reconstructed frames 1-7 as input PNGs
+      #   4. Extract original 8th frame (Target) & 4th frame (Middle)
+      #
+      # Examples:
+      #   1-7   → encode → rec PNGs | target = frame 8,  middle = frame 4
+      #   61-67 → encode → rec PNGs | target = frame 68, middle = frame 64
+      # ----------------------------------------
+      - name: Extract, encode segments & create PNG dataset
+        run: |
+          set -euo pipefail
+
+          mkdir -p Inter4K_png/Raw/Input
+          mkdir -p Inter4K_png/Raw/Output
+          mkdir -p yuv_segments
+          mkdir -p encoded_segments
+
+          echo "Total frames: $TOTAL_FRAMES"
+
+          for ((START=1; START+7<=TOTAL_FRAMES; START+=STRIDE)); do
+
+            TARGET=$((START + 7))
+            MIDDLE=$((START + 3))
+
+            printf -v TARGET_PAD "%03d" "$TARGET"
+            printf -v MIDDLE_PAD "%03d" "$MIDDLE"
+
+            echo "========================================"
+            echo "Segment START=$START  frames ${START}-$((START+6))"
+            echo "  Target (8th original) = frame $TARGET"
+            echo "  Middle (4th original) = frame $MIDDLE"
+            echo "========================================"
+
+            # ----------------------------------------
+            # 1. Extract 7 frames as a separate raw YUV
+            # ----------------------------------------
+            FIRST_FRAME=$((START - 1))
+            LAST_FRAME=$((START + 5))
+
+            $FFMPEG -v error -y \
+              -i "$INPUT" \
+              -vf "select='between(n\,${FIRST_FRAME}\,${LAST_FRAME})',setpts=N/FRAME_RATE/TB" \
+              -vsync 0 \
+              -pix_fmt yuv420p \
+              -s ${WIDTH}x${HEIGHT} \
+              -r ${FPS} \
+              -f rawvideo \
+              yuv_segments/seg_${START}.yuv
+
+            # ----------------------------------------
+            # 2. Encode the 7-frame YUV with vvencapp
+            # ----------------------------------------
+            $VVENCAPP \
+              -c $GITHUB_WORKSPACE/cfg/experimental/lowdelay_faster.cfg \
+              -i yuv_segments/seg_${START}.yuv \
+              -b encoded_segments/seg_${START}.bin \
+              -o encoded_segments/seg_${START}_rec.yuv \
+              --SourceWidth=${WIDTH} \
+              --SourceHeight=${HEIGHT} \
+              --FrameRate=${FPS} \
+              --FramesToBeEncoded=7 \
+              --QP=${QP}
+
+            # ----------------------------------------
+            # 3. Extract 7 reconstructed frames as input PNGs
+            # ----------------------------------------
+            for OFFSET in 0 1 2 3 4 5 6; do
+
+              FRAME=$((START + OFFSET))
+              INPUT_NUM=$((OFFSET + 1))
+
+              printf -v FRAME_PAD "%03d" "$FRAME"
+
+              $FFMPEG -v error -y \
+                -f rawvideo \
+                -pix_fmt yuv420p \
+                -s ${WIDTH}x${HEIGHT} \
+                -framerate ${FPS} \
+                -i encoded_segments/seg_${START}_rec.yuv \
+                -vf "select=eq(n\\,$OFFSET)" \
+                -frames:v 1 \
+                Inter4K_png/Raw/Input/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${FRAME_PAD}_in${INPUT_NUM}.png
+
+            done
+
+            # ----------------------------------------
+            # 4. Extract original target frame (8th frame)
+            # ----------------------------------------
+            $FFMPEG -v error -y \
+              -i "$INPUT" \
+              -vf "select=eq(n\\,$((TARGET-1)))" \
+              -frames:v 1 \
+              Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${TARGET_PAD}_out.png
+
+            # ----------------------------------------
+            # 5. Extract original middle frame (4th frame)
+            # ----------------------------------------
+            $FFMPEG -v error -y \
+              -i "$INPUT" \
+              -vf "select=eq(n\\,$((MIDDLE-1)))" \
+              -frames:v 1 \
+              Inter4K_png/Raw/Output/Inter4K_vid_${{ matrix.VIDEO_ID }}_f${MIDDLE_PAD}_out.png
+
+            # Clean up segment files to save disk
+            rm -f yuv_segments/seg_${START}.yuv
+            rm -f encoded_segments/seg_${START}.bin
+            rm -f encoded_segments/seg_${START}_rec.yuv
+
+          done
+
+      # ----------------------------------------
+      - name: Install rclone
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
+
+      # ----------------------------------------
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
+
+      # ----------------------------------------
+      - name: Upload dataset to Google Drive
+        run: |
+          rclone copy Inter4K_png dataset:lowdelay_faster/Inter4K_png --progress

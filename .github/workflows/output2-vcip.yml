@@ -1,0 +1,157 @@
+name: Original Video → VCIP Output2 PNG Dataset → Google Drive
+
+on:
+  workflow_dispatch:
+
+jobs:
+  convert:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        VIDEO_ID: [3,43,53]
+
+    env:
+      FRAME_LIMIT: 0
+
+    steps:
+
+    # ----------------------------------------
+    - uses: actions/checkout@v4
+
+    # ----------------------------------------
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y unzip xz-utils megatools wget
+
+    # ----------------------------------------
+    - name: Download FFmpeg
+      run: |
+        mkdir -p ffmpeg_bin
+        cd ffmpeg_bin
+
+        wget https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+
+        tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
+
+    # ----------------------------------------
+    - name: Set variables
+      run: |
+        echo "FFMPEG=ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" >> $GITHUB_ENV
+        echo "FFPROBE=ffmpeg_bin/ffmpeg-master-latest-linux64-gpl/bin/ffprobe" >> $GITHUB_ENV
+        echo "INPUT=dataset/${{ matrix.VIDEO_ID }}.mp4" >> $GITHUB_ENV
+
+    # ----------------------------------------
+    - uses: actions/cache@v4
+      with:
+        path: dataset
+        key: dataset-mega-v1-${{ runner.os }}
+
+    # ----------------------------------------
+    - name: Download dataset
+      run: |
+        if [ ! -d dataset ]; then
+          mkdir -p dataset_zip
+
+          megadl \
+          "https://mega.nz/file/kIdhyATA#QjiOI1xFOZjRWpRUKSSPFRWzBx2WpUQ1PLfezxmt740" \
+          --path dataset_zip
+
+          mkdir -p dataset
+          unzip -o dataset_zip/*.zip -d dataset
+        fi
+
+    # ----------------------------------------
+    # Detect resolution dynamically
+    # ----------------------------------------
+    - name: Detect video resolution
+      run: |
+        WIDTH=$($FFPROBE -v error \
+        -select_streams v:0 \
+        -show_entries stream=width \
+        -of csv=p=0 "$INPUT")
+
+        HEIGHT=$($FFPROBE -v error \
+        -select_streams v:0 \
+        -show_entries stream=height \
+        -of csv=p=0 "$INPUT")
+
+        echo "WIDTH=$WIDTH" >> $GITHUB_ENV
+        echo "HEIGHT=$HEIGHT" >> $GITHUB_ENV
+
+        echo "Detected resolution: ${WIDTH}x${HEIGHT}"
+
+    # ----------------------------------------
+    # Extract original frames
+    # ----------------------------------------
+    - name: Extract original video frames
+      run: |
+        mkdir -p original_frames
+
+        if [ "$FRAME_LIMIT" -gt 0 ]; then
+          LIMIT="-frames:v $FRAME_LIMIT"
+        else
+          LIMIT=""
+        fi
+
+        $FFMPEG -y \
+          -i "$INPUT" \
+          $LIMIT \
+          original_frames/frame_%06d.png
+
+    # ----------------------------------------
+    # Create dataset (KEEP STRIDE SAME)
+    # ----------------------------------------
+    - name: Create VCIP Output2 samples
+      run: |
+        mkdir -p upload_data/VCIP_png/Raw/Output2
+
+        TOTAL_FRAMES=$(find original_frames -name "*.png" | wc -l)
+
+        echo "Total frames: $TOTAL_FRAMES"
+
+        if [ "$FRAME_LIMIT" -gt 0 ]; then
+          STRIDE=1
+        else
+          case $TOTAL_FRAMES in
+            120) STRIDE=28 ;;
+            150) STRIDE=30 ;;
+            300) STRIDE=60 ;;
+            600) STRIDE=120 ;;
+            *) STRIDE=60 ;;
+          esac
+        fi
+
+        echo "Using STRIDE: $STRIDE"
+
+        for ((f=1; f+3<=TOTAL_FRAMES; f+=STRIDE)); do
+
+          printf -v F3 "%06d" $((f+3))
+
+          cp original_frames/frame_${F3}.png \
+          upload_data/VCIP_png/Raw/Output2/VCIP_vid_${{ matrix.VIDEO_ID }}_f${F3}_original.png
+
+        done
+
+    # ----------------------------------------
+    - name: Install rclone
+      run: |
+        curl https://rclone.org/install.sh | sudo bash
+
+    # ----------------------------------------
+    - name: Configure rclone
+      run: |
+        mkdir -p ~/.config/rclone
+
+        echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" \
+        | base64 -d \
+        > ~/.config/rclone/rclone.conf
+
+    # ----------------------------------------
+    - name: Upload dataset to Drive
+      run: |
+        rclone copy upload_data/VCIP_png \
+        dataset:upload_data/VCIP_png \
+        --progress

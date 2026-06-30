@@ -1,0 +1,121 @@
+name: Runner Specs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  specs:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Basic System Info
+        run: |
+          echo "===== OS ====="
+          uname -a
+          cat /etc/os-release
+
+          echo
+          echo "===== CPU ====="
+          lscpu
+
+          echo
+          echo "===== Memory ====="
+          free -h
+
+          echo
+          echo "===== Disk ====="
+          df -h
+
+          echo
+          echo "===== Mounts ====="
+          lsblk
+
+      - name: Hardware Details
+        run: |
+          echo "===== PCI Devices ====="
+          lspci || true
+
+          echo
+          echo "===== USB Devices ====="
+          lsusb || true
+
+          echo
+          echo "===== DMI ====="
+          sudo dmidecode -t system || true
+
+      - name: Network Info
+        run: |
+          echo "===== Network Interfaces ====="
+          ip addr
+
+          echo
+          echo "===== Routing ====="
+          ip route
+
+      - name: Environment Variables
+        run: |
+          echo "===== Environment ====="
+          env | sort
+
+      - name: Installed Software
+        run: |
+          echo "===== GCC ====="
+          gcc --version || true
+
+          echo
+          echo "===== Python ====="
+          python3 --version || true
+
+          echo
+          echo "===== Pip ====="
+          pip3 --version || true
+
+          echo
+          echo "===== Java ====="
+          java -version || true
+
+          echo
+          echo "===== Node ====="
+          node --version || true
+
+          echo
+          echo "===== npm ====="
+          npm --version || true
+
+          echo
+          echo "===== Docker ====="
+          docker --version || true
+
+          echo
+          echo "===== Git ====="
+          git --version || true
+
+          echo
+          echo "===== FFmpeg ====="
+          ffmpeg -version | head -5 || true
+
+      - name: GPU Check
+        run: |
+          echo "===== NVIDIA SMI ====="
+          nvidia-smi || echo "No NVIDIA GPU"
+
+          echo
+          echo "===== CUDA ====="
+          nvcc --version || echo "CUDA not installed"
+
+      - name: Disk Usage Details
+        run: |
+          echo "===== Workspace ====="
+          du -sh "$GITHUB_WORKSPACE" || true
+
+          echo
+          echo "===== Root Usage ====="
+          sudo du -sh /usr /opt /home 2>/dev/null || true
+
+      - name: Runner Context
+        run: |
+          echo "RUNNER_NAME=$RUNNER_NAME"
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ARCH=$RUNNER_ARCH"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          echo "RUNNER_WORKSPACE=$RUNNER_WORKSPACE"

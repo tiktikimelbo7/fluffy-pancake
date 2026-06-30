@@ -1,0 +1,46 @@
+name: Cache Dataset (MEGA)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cache-dataset:
+    runs-on: ubuntu-22.04
+
+    steps:
+    # ----------------------------------------
+    # Install tools
+    # ----------------------------------------
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y unzip megatools
+
+    # ----------------------------------------
+    # Cache dataset
+    # ----------------------------------------
+    - name: Restore dataset cache
+      uses: actions/cache@v4
+      with:
+        path: dataset
+        key: dataset-mega-v1-${{ runner.os }}
+
+    # ----------------------------------------
+    # Download if cache miss
+    # ----------------------------------------
+    - name: Download dataset (if needed)
+      run: |
+        if [ ! -d dataset ]; then
+          echo "📥 Cache miss → downloading dataset"
+
+          mkdir -p dataset_zip
+
+          megadl "https://mega.nz/file/cu5mnB5Y#eHEPyXYcR77ONTh1WxJOUR2n9DL5IU8GUKuYPWxjjXw" \
+            --path dataset_zip
+
+          mkdir -p dataset
+          unzip -o dataset_zip/*.zip -d dataset
+
+        else
+          echo "✅ Dataset restored from cache"
+        fi

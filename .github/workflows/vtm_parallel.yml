@@ -1,0 +1,112 @@
+name: VTM Parallel Encode (750–770)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  encode:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        video_id: [120]
+
+    env:
+      WIDTH: 3840
+      HEIGHT: 2160
+      FRAMERATE: 60
+      FRAMES: 1
+      QP: 37
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential cmake git ffmpeg unzip python3-pip
+        pip3 install gdown
+
+    # -----------------------------
+    # CLONE & BUILD VTM (DEBUG)
+    # -----------------------------
+    - name: Clone VTM
+      run: |
+        git clone https://github.com/tonmoyislam250/fluffy-pancake.git
+        cd fluffy-pancake
+        git submodule update --init --recursive
+
+    - name: Build VTM (Debug)
+      run: |
+        cd fluffy-pancake
+        mkdir build-debug
+        cd build-debug
+        cmake .. -DCMAKE_BUILD_TYPE=Debug
+        make -j$(nproc)
+
+    # -----------------------------
+    # DOWNLOAD & EXTRACT ZIP
+    # -----------------------------
+    - name: Download dataset zip
+      run: |
+        mkdir -p dataset_zip
+        gdown 1HYFzISIJJckgpgz0-mYYfpH2TXwG9bZN \
+          -O dataset_zip/videos.zip
+
+    - name: Extract zip
+      run: |
+        unzip dataset_zip/videos.zip -d dataset
+
+    # -----------------------------
+    # CONVERT TO YUV
+    # -----------------------------
+    - name: Convert video to YUV
+      run: |
+        mkdir -p Dataset/Inter4K/60fps/UHD/yuv
+        ffmpeg -y \
+          -i dataset/${{ matrix.video_id }}.mp4 \
+          -pix_fmt yuv420p \
+          -s ${WIDTH}x${HEIGHT} \
+          -r ${FRAMERATE} \
+          Dataset/Inter4K/60fps/UHD/yuv/${{ matrix.video_id }}.yuv
+
+    # -----------------------------
+    # ENCODE
+    # -----------------------------
+    - name: Encode with VTM (Debug)
+      run: |
+        mkdir -p Dataset/${QP}/${{ matrix.video_id }}
+        cd fluffy-pancake
+        ./bin/umake/gcc-11.4/x86_64/debug/EncoderApp \
+          -c cfg/encoder_intra_vtm.cfg \
+          -i ../Dataset/Inter4K/60fps/UHD/yuv/${{ matrix.video_id }}.yuv \
+          -b ../Dataset/${QP}/${{ matrix.video_id }}/output_QP${QP}.bin \
+          -o ../Dataset/${QP}/${{ matrix.video_id }}/rec_QP${QP}.yuv \
+          --SourceWidth=${WIDTH} \
+          --SourceHeight=${HEIGHT} \
+          --FrameRate=${FRAMERATE} \
+          --FramesToBeEncoded=${FRAMES} \
+          --QP=${QP} \
+          --TraceFile="../Dataset/${QP}/${{ matrix.video_id }}/${{ matrix.video_id }}.csv" \
+          --TraceRule="D_BLOCK_STATISTICS_ALL:poc >=0" \
+          > ../Dataset/${QP}/${{ matrix.video_id }}/log_QP${QP}.txt
+
+    # -----------------------------
+    # DEBUG (IMPORTANT)
+    # -----------------------------
+    - name: Debug output files
+      run: |
+        echo "Listing Dataset folder:"
+        ls -R Dataset || true
+
+    # -----------------------------
+    # UPLOAD RESULTS (FIXED)
+    # -----------------------------
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: vtm-${{ matrix.video_id }}
+        path: Dataset/${{ env.QP }}/${{ matrix.video_id }}
