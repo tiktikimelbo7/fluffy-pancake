@@ -18,42 +18,41 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake unzip
+          sudo apt-get install -y build-essential cmake unzip wget
 
       - name: Download source
         run: |
-          wget -O vtm.zip "${VTM_URL}"
+          wget -O vtm.zip "$VTM_URL"
           unzip -q vtm.zip
           mv VVCSoftware_VTM-${VTM_VERSION} VTM
 
-      - name: Restore app cache
-        id: app-cache
-        uses: actions/cache@v4
+      - name: Restore VTM cache
+        id: cache
+        uses: actions/cache/restore@v4
         with:
-          path: VTM/bin  # FIXED: VTM outputs executables to the root bin/ folder
-          key: linux-vtm-apps-${{ env.VTM_VERSION }}
+          path: VTM/bin
+          key: vtm-20.2-v1
 
       - name: Configure
-        if: steps.app-cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p VTM/build
           cd VTM/build
           cmake .. -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        if: steps.app-cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           cd VTM/build
-          make -j$(nproc)
+          make -j"$(nproc)"
 
       - name: Show executables
         run: |
-          # FIXED: Because we used CMake, binaries are directly in VTM/bin 
-          # rather than the umake/... directory structure.
           find VTM/bin -type f -executable
 
-      - name: Upload VTM Apps
-        uses: actions/upload-artifact@v4
+      - name: Save VTM cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
         with:
-          name: VTM-20.2-Linux
-          path: VTM/bin/* # FIXED: Uploading from the correct bin/ folder
+          path: VTM/bin
+          key: vtm-20.2-v1
