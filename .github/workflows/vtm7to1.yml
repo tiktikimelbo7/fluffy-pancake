@@ -30,12 +30,13 @@ jobs:
           sudo apt install -y build-essential cmake unzip wget curl megatools xz-utils ffmpeg
 
 
-      - name: Cache VTM  
-        id: cache-vtm  
-        uses: actions/cache@v4  
-        with:  
-          path: VTM/bin/
-          key: vtm-20.2-v1
+      - name: Restore VTM cache
+        id: cache-vtm
+        uses: actions/cache@v4
+        with:
+          path: VTM/bin
+          key: vtm-20.2-v1-${{ runner.os }}
+        
 
       - name: Locate EncoderApp
         run: |
