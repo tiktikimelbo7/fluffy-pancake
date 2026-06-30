@@ -158,6 +158,6 @@ jobs:
       - name: Upload dataset, YUVs, and Logs
         run: |
           rclone copy Inter4K_png dataset:sevtone_vtm_37/Inter4K_png --progress
-          rclone copy yuv_segments dataset:sevtone_vtm_37/yuvs/yuv_segments_vid_${{ matrix.VIDEO_ID }} --progress
-          rclone copy reconstructed_yuvs dataset:sevtone_vtm_37/yuvs/reconstructed_yuvs_vid_${{ matrix.VIDEO_ID }} --progress
+          rclone copy yuv_segments dataset:sevtone_vtm_37/originals/yuv_segments_vid_${{ matrix.VIDEO_ID }} --progress
+          rclone copy reconstructed_yuvs dataset:sevtone_vtm_37/reconstruct/reconstructed_yuvs_vid_${{ matrix.VIDEO_ID }} --progress
           rclone copyto encoding_summary.txt dataset:sevtone_vtm_37/Logs/encoding_summary_vid_${{ matrix.VIDEO_ID }}.txt --progress
