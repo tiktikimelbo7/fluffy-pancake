@@ -17,7 +17,7 @@ jobs:
       WIDTH: 512
       HEIGHT: 512
       FPS: 24
-      STRIDE: 24
+      STRIDE: 60
       QP: 37
       INPUT: dataset/${{ matrix.VIDEO_ID }}.mp4
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
