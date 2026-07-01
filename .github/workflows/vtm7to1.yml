@@ -87,7 +87,7 @@ jobs:
 
             # File names following the required naming convention
             RAW_SEG="yuv_segments/${VIDEO_ID}_F_${START}_to_${END}_${WIDTH}_${HEIGHT}_${FPS}.yuv"
-            REC_SEG="reconstructed_yuvs/C_${VIDEO_ID}_F_${START}_to_${END}_${WIDTH}_${HEIGHT}_${FPS}_GOP7_QP${QP}.yuv"
+            REC_SEG="reconstructed_yuvs/C_${VIDEO_ID}_F_${START}_to_${END}_${WIDTH}_${HEIGHT}_${FPS}_GOP8_QP${QP}.yuv"
 
             # Extract 7-frame sequence and scale down to 512x512
             ffmpeg -v error -y \
@@ -108,7 +108,7 @@ jobs:
               -wdt ${WIDTH} \
               -hgt ${HEIGHT} \
               -fr ${FPS} \
-              -f 7 \
+              -f 8 \
               -q ${QP} | tee -a encoding_summary.txt
 
             # Generate Input PNGs from reconstructed YUV
