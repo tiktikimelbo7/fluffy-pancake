@@ -20,6 +20,7 @@ jobs:
       STRIDE: 30
       QP: 37
       INPUT: dataset/${{ matrix.VIDEO_ID }}.mp4
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
     steps:
       - uses: actions/checkout@v4
